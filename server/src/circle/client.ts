@@ -117,6 +117,22 @@ export class CircleWalletGateway {
     return wallet;
   }
 
+  /** Finds a wallet the marketplace already controls by its address. */
+  async findWalletByAddress(address: `0x${string}`): Promise<ProvisionedWallet | undefined> {
+    const response = await this.client.listWallets({ address });
+    const wallet = (response.data?.wallets ?? []).find(
+      (candidate) => candidate.address.toLowerCase() === address.toLowerCase(),
+    );
+    if (!wallet) return undefined;
+
+    return {
+      id: wallet.id,
+      address: wallet.address as `0x${string}`,
+      blockchain: wallet.blockchain,
+      accountType: DEFAULT_ACCOUNT_TYPE,
+    };
+  }
+
   /** On-chain USDC balance for a wallet, in minor units. */
   async getUsdcBalance(walletId: string): Promise<bigint> {
     const response = await this.client.getWalletTokenBalance({ id: walletId, includeAll: true });

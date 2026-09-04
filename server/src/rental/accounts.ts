@@ -191,6 +191,64 @@ export class AccountService {
     });
   }
 
+  /**
+   * Rebinds a renter account to a wallet the marketplace already controls.
+   *
+   * The reference ledger lives in memory, so a restart forgets which account owned which
+   * wallet while the wallet itself persists at Circle. This adopts one back and credits
+   * whatever it holds, rather than stranding the balance behind a forgotten account id.
+   */
+  async adoptRenter(address: `0x${string}`): Promise<OnboardResult> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      throw new LedgerConflict(`Not a valid address: ${address}`);
+    }
+
+    const wallet = await this.wallets.findWalletByAddress(address);
+    if (!wallet) throw new LedgerConflict(`No wallet under this account has address ${address}`);
+
+    const account = await this.ledger.openAccount({
+      role: 'renter',
+      walletId: wallet.id,
+      address: wallet.address,
+    });
+
+    await this.syncDeposits(account.id);
+    return { account: await this.ledger.requireAccount(account.id), depositAddress: wallet.address };
+  }
+
+  /**
+   * Credits USDC that arrived on chain but that no ledger entry accounts for.
+   *
+   * Deposits normally arrive through the Circle notification sink. This is the backstop for
+   * when that has not run — a local environment with no public URL, or a dropped webhook.
+   * The group id is keyed on the observed balance, so calling it repeatedly credits once.
+   */
+  async syncDeposits(accountId: string): Promise<{ credited: bigint; onChain: bigint }> {
+    const account = await this.ledger.requireAccount(accountId);
+
+    if (account.payoutMode === 'direct') {
+      // Their wallet is their own; its balance is not the platform's to credit.
+      return { credited: 0n, onChain: 0n };
+    }
+
+    const onChain = await this.wallets.getUsdcBalance(account.walletId);
+    const recorded = account.available + account.held;
+    const drift = onChain - recorded;
+
+    // A negative drift is normal: the wallet pays its own gas, so it sits slightly below the
+    // ledger after every outgoing transfer. Only unexplained credit is a deposit.
+    if (drift <= 0n) return { credited: 0n, onChain };
+
+    await this.ledger.recordDeposit({
+      accountId,
+      amount: drift,
+      groupId: `deposit:sync:${accountId}:${onChain}`,
+      transactionId: `sync:${accountId}:${onChain}`,
+    });
+
+    return { credited: drift, onChain };
+  }
+
   async balance(accountId: string) {
     return this.ledger.balanceOf(accountId);
   }

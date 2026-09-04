@@ -285,6 +285,8 @@ npm start
 | `POST` | `/accounts/owners/link` | Register an owner at an address they already control |
 | `GET` | `/accounts/:id/balance` | Available, held, and total balance |
 | `GET` | `/accounts/:id/statement` | Ledger entries for the account |
+| `POST` | `/accounts/:id/deposits/sync` | Credit a deposit that arrived without a notification |
+| `POST` | `/accounts/renters/adopt` | Rebind a renter account to a wallet already controlled |
 | `POST` | `/accounts/:id/withdrawals` | Pay out to a nominated address |
 | `GET` | `/robots` | The listed fleet with rate cards and availability |
 | `GET` | `/rentals/:id/events` | Ordered log of everything that happened to a rental |
@@ -318,6 +320,10 @@ the renter's balance.
   `groupId` — that index is what makes deposit and settlement replay-safe. Nothing above the
   store interface changes.
 - The entity secret belongs in a secrets manager or HSM, never in `.env` and never in logs.
+- Deposits arrive through the Circle notification sink, which needs a public URL. Locally
+  there isn't one, so `POST /accounts/:id/deposits/sync` reads the wallet balance and credits
+  whatever the ledger cannot account for. Keep it in production as a backstop for a dropped
+  webhook; it is idempotent on the observed balance.
 - `POST /treasury/rebalance` and the reconcile endpoint should run on a schedule. A non-zero
   drift means USDC arrived that no ledger entry accounts for.
 - The web app is served from `WEB_ORIGIN` (default `http://localhost:3000`), which is the only

@@ -32,6 +32,7 @@ export default function Wallet() {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [checking, setChecking] = useState(false);
 
     useEffect(() => {
         if (!session) return;
@@ -115,9 +116,36 @@ export default function Wallet() {
                         </div>
 
                         <p className='text-sm text-secondary'>
-                            Send USDC on Arc to this address. It is credited to your available balance once
-                            the transfer confirms.
+                            Send USDC on Arc to this address, then check for it. Deposits normally arrive
+                            through a Circle notification; this asks the chain directly, which is what a
+                            local environment with no public URL needs.
                         </p>
+
+                        <button
+                            className='primary-button'
+                            disabled={checking}
+                            onClick={() => {
+                                if (!session) return;
+                                setChecking(true);
+                                setMessage(null);
+                                setError(null);
+                                api.syncDeposits(session.accountId)
+                                    .then(async (result) => {
+                                        setMessage(
+                                            Number(result.credited) > 0
+                                                ? `Credited ${usd(result.credited)} USDC.`
+                                                : 'No new deposits found.',
+                                        );
+                                        await refresh();
+                                    })
+                                    .catch((cause: unknown) =>
+                                        setError(cause instanceof Error ? cause.message : 'Could not check'),
+                                    )
+                                    .finally(() => setChecking(false));
+                            }}
+                        >
+                            {checking ? <div className='spinner border-background' /> : 'Check for deposits'}
+                        </button>
 
                         <div
                             className='p-3.5 flex items-center justify-between gap-x-3 bg-gray-background rounded-lg cursor-pointer'

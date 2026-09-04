@@ -159,6 +159,16 @@ export async function createServer() {
     res.status(201).json({ accountId: result.account.id, depositAddress: result.depositAddress });
   });
 
+  /** Rebinds a renter account to a wallet this account already controls. */
+  app.post('/accounts/renters/adopt', async (req, res) => {
+    const result = await accounts.adoptRenter(String(req.body.address ?? '') as `0x${string}`);
+    res.status(201).json({
+      accountId: result.account.id,
+      depositAddress: result.depositAddress,
+      available: toDecimalString(result.account.available),
+    });
+  });
+
   app.post('/accounts/owners', async (_req, res) => {
     const result = await accounts.onboardOwner();
     res.status(201).json({ accountId: result.account.id, payoutAddress: result.depositAddress });
@@ -183,6 +193,15 @@ export async function createServer() {
       available: toDecimalString(balance.available),
       held: toDecimalString(balance.held),
       total: toDecimalString(balance.total),
+    });
+  });
+
+  /** Credits a deposit that landed on chain without a notification reaching the server. */
+  app.post('/accounts/:accountId/deposits/sync', async (req, res) => {
+    const result = await accounts.syncDeposits(req.params.accountId);
+    res.json({
+      credited: toDecimalString(result.credited),
+      onChain: toDecimalString(result.onChain),
     });
   });
 

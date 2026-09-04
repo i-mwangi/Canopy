@@ -45,6 +45,11 @@ export const api = {
 
     balance: (accountId: string) => request<Balance>(`/accounts/${accountId}/balance`),
 
+    syncDeposits: (accountId: string) =>
+        request<{ credited: string; onChain: string }>(`/accounts/${accountId}/deposits/sync`, {
+            method: 'POST',
+        }),
+
     statement: (accountId: string) => request<StatementEntry[]>(`/accounts/${accountId}/statement`),
 
     withdraw: (accountId: string, amount: string, destinationAddress: string) =>
