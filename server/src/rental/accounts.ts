@@ -28,7 +28,7 @@ export class AccountService {
   async onboardRenter(): Promise<OnboardResult> {
     const accountId = randomUUID();
     const wallet = await this.wallets.createWallet(this.walletSetId, {
-      accountType: 'SCA',
+      accountType: 'EOA',
       refId: `renter:${accountId}`,
     });
 
@@ -69,7 +69,7 @@ export class AccountService {
   async onboardOwner(): Promise<OnboardResult> {
     const accountId = randomUUID();
     const wallet = await this.wallets.createWallet(this.walletSetId, {
-      accountType: 'SCA',
+      accountType: 'EOA',
       refId: `owner:${accountId}`,
     });
 

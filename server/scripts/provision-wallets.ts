@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   console.log(`CIRCLE_WALLET_SET_ID=${walletSetId}`);
 
   const roles = ['treasury', 'operating', 'revenue', 'settlement-operator'] as const;
-  const provisioned = await wallets.createWallets(walletSetId, roles.length, { accountType: 'SCA' });
+  const provisioned = await wallets.createWallets(walletSetId, roles.length, { accountType: 'EOA' });
 
   roles.forEach((role, index) => {
     const wallet = provisioned[index];

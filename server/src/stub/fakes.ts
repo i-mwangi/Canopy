@@ -45,7 +45,7 @@ export class StubWalletGateway {
         id,
         address: walletAddress,
         blockchain: 'ARC-TESTNET',
-        accountType: options.accountType ?? 'SCA',
+        accountType: options.accountType ?? 'EOA',
       };
     });
   }

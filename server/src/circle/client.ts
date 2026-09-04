@@ -23,6 +23,14 @@ export type TransferReceipt = {
   txHash?: string;
 };
 
+/**
+ * USDC is the native gas token on Arc and every wallet here holds USDC, so a plain
+ * key-controlled account covers the whole flow. Smart contract accounts exist for gas
+ * sponsorship and batch execution, which would add a per-wallet deployment and a paymaster
+ * this design has no use for.
+ */
+const DEFAULT_ACCOUNT_TYPE = 'EOA' as const;
+
 const TERMINAL_STATES = new Set(['COMPLETE', 'CONFIRMED', 'FAILED', 'CANCELLED', 'DENIED']);
 const SUCCESS_STATES = new Set(['COMPLETE', 'CONFIRMED']);
 
@@ -62,7 +70,7 @@ export class CircleWalletGateway {
       walletSetId,
       blockchains: [this.config.chain.blockchain as Blockchain],
       count,
-      accountType: options.accountType ?? 'SCA',
+      accountType: options.accountType ?? DEFAULT_ACCOUNT_TYPE,
       ...(options.refId ? { refId: options.refId } : {}),
     });
 
@@ -71,7 +79,7 @@ export class CircleWalletGateway {
       throw new Error(`Expected ${count} wallets from Circle, received ${wallets.length}`);
     }
 
-    const accountType = options.accountType ?? 'SCA';
+    const accountType = options.accountType ?? DEFAULT_ACCOUNT_TYPE;
     return wallets.map((wallet) => ({
       id: wallet.id,
       address: wallet.address as `0x${string}`,
