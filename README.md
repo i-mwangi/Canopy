@@ -169,6 +169,19 @@ rental service. Only the two outermost adapters are swapped.
 The rental page carries an **Advance meter** button in stub mode, standing in for the robot
 agent so a rental can be driven by hand.
 
+### Real money, no contracts
+
+`STUB_CHAIN=true` stubs only the registry and rental manager. Circle stays real, so USDC
+actually moves between wallets while nothing needs to be deployed:
+
+```bash
+cd server && STUB_CHAIN=true SEED_RENTER_USDC=5 npm start
+```
+
+The stub fleet is then owned by a real Circle wallet, so settlement pays real earnings
+somewhere they can be seen. `SEED_RENTER_USDC` moves a float from the operating wallet to each
+new renter, which saves sending every tester to a faucet.
+
 ## Frontend
 
 ```bash
