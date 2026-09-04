@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   initiateDeveloperControlledWalletsClient,
   type Blockchain,
@@ -30,6 +32,24 @@ export type TransferReceipt = {
  * this design has no use for.
  */
 const DEFAULT_ACCOUNT_TYPE = 'EOA' as const;
+
+/** Fixed namespace so the same semantic key always derives the same UUID. */
+const IDEMPOTENCY_NAMESPACE = Buffer.from('1b671a64-40d5-491e-99b0-da01ff1f3341'.replace(/-/g, ''), 'hex');
+
+/**
+ * Circle requires an idempotency key in UUID format, but the keys that carry meaning here are
+ * strings like `settle:<rentalId>:payout`. Deriving a version 5 UUID from the semantic key
+ * keeps a retry idempotent while satisfying the format.
+ */
+export function idempotencyUuid(seed: string): string {
+  const hash = createHash('sha1').update(IDEMPOTENCY_NAMESPACE).update(seed).digest();
+
+  hash[6] = (hash[6]! & 0x0f) | 0x50;
+  hash[8] = (hash[8]! & 0x3f) | 0x80;
+
+  const hex = hash.subarray(0, 16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 const TERMINAL_STATES = new Set(['COMPLETE', 'CONFIRMED', 'FAILED', 'CANCELLED', 'DENIED']);
 const SUCCESS_STATES = new Set(['COMPLETE', 'CONFIRMED']);
@@ -123,7 +143,7 @@ export class CircleWalletGateway {
       tokenId: this.config.chain.usdcTokenId,
       destinationAddress: params.destinationAddress,
       amount: [toDecimalString(params.amount)],
-      idempotencyKey: params.idempotencyKey,
+      idempotencyKey: idempotencyUuid(params.idempotencyKey),
       fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
       ...(params.refId ? { refId: params.refId } : {}),
     });
@@ -147,7 +167,7 @@ export class CircleWalletGateway {
       contractAddress: params.contractAddress,
       abiFunctionSignature: params.abiFunctionSignature,
       abiParameters: params.abiParameters as never,
-      idempotencyKey: params.idempotencyKey,
+      idempotencyKey: idempotencyUuid(params.idempotencyKey),
       fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
     });
 
