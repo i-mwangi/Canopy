@@ -322,11 +322,27 @@ export class RentalService {
         rentalId,
         kind: 'payout_transferred',
         label: 'Owner paid',
-        detail: `USDC transferred to ${owner.address}`,
+        detail:
+          owner.payoutMode === 'direct'
+            ? `USDC transferred to ${owner.address}, an address the owner controls`
+            : `USDC transferred to ${owner.address}`,
         amount: ownerPayout,
         txHash: receipt.txHash ?? receipt.transactionId,
         phase: 'settle',
       });
+
+      // A direct owner has already been paid to their own address. Crediting the ledger and
+      // stopping there would show a spendable platform balance that no wallet backs, and a
+      // later withdrawal would pay them a second time out of the float.
+      if (owner.payoutMode === 'direct') {
+        await this.ledger.recordWithdrawal({
+          accountId: owner.id,
+          amount: ownerPayout,
+          groupId: `${settlementGroup}:direct-payout`,
+          transactionId: receipt.transactionId,
+          destination: owner.address,
+        });
+      }
     }
 
     if (platformFee > 0n) {

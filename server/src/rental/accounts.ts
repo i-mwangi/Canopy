@@ -42,6 +42,30 @@ export class AccountService {
     return { account, depositAddress: wallet.address };
   }
 
+  /**
+   * Registers an owner who already controls the address their robots are listed under, such
+   * as the account that signed the fleet seed. No wallet is created: settlement pays them
+   * directly at that address, and there is nothing for them to withdraw.
+   */
+  async linkOwner(address: `0x${string}`): Promise<Account> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      throw new LedgerConflict(`Not a valid address: ${address}`);
+    }
+
+    const existing = await this.directory.ownerAccountIdFor(address);
+    if (existing) return this.ledger.requireAccount(existing);
+
+    const account = await this.ledger.openAccount({
+      role: 'owner',
+      walletId: '',
+      address,
+      payoutMode: 'direct',
+    });
+
+    await this.directory.registerOwner(address, account.id);
+    return account;
+  }
+
   async onboardOwner(): Promise<OnboardResult> {
     const accountId = randomUUID();
     const wallet = await this.wallets.createWallet(this.walletSetId, {
@@ -95,6 +119,12 @@ export class AccountService {
     }
 
     const account = await this.ledger.requireAccount(params.accountId);
+    if (account.payoutMode === 'direct') {
+      throw new LedgerConflict(
+        'This owner is paid directly at settlement; the platform holds no balance to withdraw',
+      );
+    }
+
     const groupId = `withdrawal:${randomUUID()}`;
 
     await this.ledger.recordWithdrawal({

@@ -141,6 +141,19 @@ export async function createServer() {
     res.status(201).json({ accountId: result.account.id, payoutAddress: result.depositAddress });
   });
 
+  /**
+   * Registers an owner who already controls the address their robots are listed under.
+   * Earnings are paid to that address at settlement rather than banked with the platform.
+   */
+  app.post('/accounts/owners/link', async (req, res) => {
+    const account = await accounts.linkOwner(String(req.body.address ?? '') as `0x${string}`);
+    res.status(201).json({
+      accountId: account.id,
+      address: account.address,
+      payoutMode: account.payoutMode,
+    });
+  });
+
   app.get('/accounts/:accountId/balance', async (req, res) => {
     const balance = await accounts.balance(req.params.accountId);
     res.json({
