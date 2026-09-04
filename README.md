@@ -52,6 +52,8 @@ exactly — no unit is created or lost in the split.
 contracts/
   src/RobotRegistry.sol    robots, owners, rate cards, per-class availability
   src/RentalManager.sol    rental lifecycle: start, meter, complete, settle, cancel
+  test/                    Solidity tests for both contracts
+  scripts/                 deploy and wire, seed a starting fleet
 server/
   src/config.ts            environment, USDC minor-unit conversion
   src/circle/client.ts     Circle developer-controlled wallets gateway
@@ -172,6 +174,39 @@ elapsed clock, and a settlement row showing the fare capture and both transfer l
 The dispatch modal and the rental page both make the hold explicit — the fare shown while a job
 runs is what you will be charged, and the authorization is labelled as a reservation rather than
 a charge, because that distinction is the thing users get wrong about metered billing.
+
+## Contracts
+
+```bash
+cd contracts
+npm install
+cp .env.example .env
+npm test          # 19 Solidity tests, including a fuzz over the fee split
+npm run build
+```
+
+Deploy needs an account with a USDC balance — USDC is the native gas token on Arc, so the
+faucet funds gas and fares with the same asset. Fill `ARC_RPC_URL`, `DEPLOYER_PRIVATE_KEY` and
+`SETTLEMENT_OPERATOR_ADDRESS` (the Circle wallet the server signs with), then:
+
+```bash
+npm run deploy
+```
+
+That deploys both contracts and wires them: the registry only accepts capacity claims from the
+manager, and the manager only accepts lifecycle writes from the operator. Both grants happen
+after deploy, and the script verifies them before printing the addresses to copy into
+`server/.env`.
+
+The registry deploys empty, so nothing appears on the browse page until a fleet is listed:
+
+```bash
+npm run seed
+```
+
+`listRobot` records `msg.sender` as the owner, so the account that signs the seed owns every
+robot it lists and receives their earnings. Register that address as an owner account on the
+server, or settlement has nowhere to pay out to.
 
 ## Setup
 
