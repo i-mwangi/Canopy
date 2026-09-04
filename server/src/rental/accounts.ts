@@ -154,6 +154,43 @@ export class AccountService {
     }
   }
 
+  /**
+   * Moves a float from the operating wallet into a renter account. A real on-chain transfer,
+   * so the renter's balance is backed by USDC they can actually spend. Intended for testnet,
+   * where sending every new renter to a faucet is friction with no value.
+   */
+  async fundFromOperating(params: {
+    accountId: string;
+    operatingAccountId: string;
+    amount: bigint;
+  }): Promise<void> {
+    const operating = await this.ledger.requireAccount(params.operatingAccountId);
+    const renter = await this.ledger.requireAccount(params.accountId);
+
+    const available = await this.wallets.getUsdcBalance(operating.walletId);
+    if (available < params.amount) {
+      console.warn(
+        `Operating wallet holds ${available} but ${params.amount} was requested; skipping renter seed`,
+      );
+      return;
+    }
+
+    const receipt = await this.wallets.transferUsdc({
+      walletId: operating.walletId,
+      destinationAddress: renter.address,
+      amount: params.amount,
+      idempotencyKey: `seed:${renter.id}`,
+    });
+
+    await this.wallets.waitForTransaction(receipt.transactionId);
+    await this.ledger.recordDeposit({
+      accountId: renter.id,
+      amount: params.amount,
+      groupId: `deposit:${receipt.transactionId}`,
+      transactionId: receipt.transactionId,
+    });
+  }
+
   async balance(accountId: string) {
     return this.ledger.balanceOf(accountId);
   }

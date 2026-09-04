@@ -42,17 +42,19 @@ function renderRental(rental: Rental) {
 }
 
 export async function createServer() {
-  const stubbed = process.env.STUB_MODE === 'true';
-  const config = stubbed ? stubConfig() : loadConfig();
+  // Two independent stubs. STUB_MODE fakes everything for a walkthrough with no credentials.
+  // STUB_CHAIN fakes only the registry and rental manager, so real USDC still moves through
+  // Circle while there is nothing deployed to point at.
+  const stubbedWallets = process.env.STUB_MODE === 'true';
+  const stubbedChain = stubbedWallets || process.env.STUB_CHAIN === 'true';
 
-  const wallets = stubbed ? (new StubWalletGateway() as never) : new CircleWalletGateway(config);
+  const config = stubbedWallets ? stubConfig() : loadConfig();
+
+  const wallets = stubbedWallets ? (new StubWalletGateway() as never) : new CircleWalletGateway(config);
   const ledger = new Ledger(new InMemoryLedgerStore());
   const directory = new InMemoryAccountDirectory();
 
-  const stubChain = stubbed ? new StubChain(STUB_OWNER_ADDRESS) : null;
-  const chain = stubChain ? (stubChain as never as RentalChain) : new RentalChain(config, wallets);
-
-  const walletSetId = stubbed
+  const walletSetId = stubbedWallets
     ? await wallets.createWalletSet()
     : (process.env.CIRCLE_WALLET_SET_ID ?? '');
   if (!walletSetId) throw new Error('CIRCLE_WALLET_SET_ID must be set; run the provision script first');
@@ -82,6 +84,26 @@ export async function createServer() {
   };
 
   const accounts = new AccountService(config, wallets, ledger, directory, walletSetId);
+
+  // The stub fleet needs one owner so settlement has somewhere to pay. With real wallets that
+  // owner gets a real one, so earnings land somewhere the money can actually be seen.
+  let chain: RentalChain;
+  if (stubbedChain) {
+    const owner = stubbedWallets
+      ? await ledger.openAccount({
+          role: 'owner',
+          walletId: 'stub-fleet-owner',
+          address: STUB_OWNER_ADDRESS,
+        })
+      : (await accounts.onboardOwner()).account;
+
+    await directory.registerOwner(owner.address, owner.id);
+    chain = new StubChain(owner.address) as never as RentalChain;
+    console.log(`stub chain: fleet owner ${owner.address}`);
+  } else {
+    chain = new RentalChain(config, wallets);
+  }
+
   const eventLog = new RentalEventLog();
   const rentals = new RentalService(
     config,
@@ -95,16 +117,9 @@ export async function createServer() {
   );
   const treasury = new TreasuryManager(config, wallets, ledger, platform);
 
-  // In stub mode every listed robot belongs to one owner account, so settlement has somewhere
-  // to pay out to without an owner having to sign up first.
-  if (stubbed) {
-    const owner = await ledger.openAccount({
-      role: 'owner',
-      walletId: 'stub-fleet-owner',
-      address: STUB_OWNER_ADDRESS,
-    });
-    await directory.registerOwner(STUB_OWNER_ADDRESS, owner.id);
-  }
+  const seedRenterAmount = process.env.SEED_RENTER_USDC
+    ? toMinorUnits(process.env.SEED_RENTER_USDC)
+    : 0n;
 
   const app = express();
   app.use(express.json());
@@ -125,11 +140,19 @@ export async function createServer() {
     const result = await accounts.onboardRenter();
 
     // Stub renters start funded so the flow can be walked through without a real deposit.
-    if (stubbed) {
+    if (stubbedWallets) {
       await accounts.creditDeposit({
         accountId: result.account.id,
         amount: await wallets.getUsdcBalance(result.account.walletId),
         transactionId: `stub-seed-${result.account.id}`,
+      });
+    } else if (seedRenterAmount > 0n) {
+      // Optional convenience for testnet: move a float from the operating wallet so a new
+      // renter can dispatch a job without visiting a faucet first.
+      await accounts.fundFromOperating({
+        accountId: result.account.id,
+        operatingAccountId: platform.operatingAccountId,
+        amount: seedRenterAmount,
       });
     }
 

@@ -85,6 +85,11 @@ export function toDecimalString(minor: bigint): string {
 }
 
 export function loadConfig(): AppConfig {
+  // With a stubbed chain there is nothing deployed to point at, so the chain fields are
+  // placeholders. Circle stays real: money still moves.
+  const chainStubbed = process.env.STUB_CHAIN === 'true';
+  const chainField = (name: string, fallback: string) => (chainStubbed ? (process.env[name] ?? fallback) : required(name));
+
   const blockchain = (process.env.CIRCLE_BLOCKCHAIN ?? 'ARC-TESTNET') as 'ARC' | 'ARC-TESTNET';
   if (blockchain !== 'ARC' && blockchain !== 'ARC-TESTNET') {
     throw new Error(`Unsupported CIRCLE_BLOCKCHAIN: ${blockchain}`);
@@ -98,11 +103,11 @@ export function loadConfig(): AppConfig {
     },
     chain: {
       blockchain,
-      rpcUrl: required('ARC_RPC_URL'),
+      rpcUrl: chainField('ARC_RPC_URL', 'stub'),
       usdcTokenId: required('CIRCLE_USDC_TOKEN_ID'),
-      robotRegistryAddress: required('ROBOT_REGISTRY_ADDRESS') as `0x${string}`,
-      rentalManagerAddress: required('RENTAL_MANAGER_ADDRESS') as `0x${string}`,
-      settlementOperatorWalletId: required('SETTLEMENT_OPERATOR_WALLET_ID'),
+      robotRegistryAddress: chainField('ROBOT_REGISTRY_ADDRESS', '0x') as `0x${string}`,
+      rentalManagerAddress: chainField('RENTAL_MANAGER_ADDRESS', '0x') as `0x${string}`,
+      settlementOperatorWalletId: chainField('SETTLEMENT_OPERATOR_WALLET_ID', 'stub'),
     },
     marketplace: {
       platformFeeBps: optionalInt('PLATFORM_FEE_BPS', 1500),
