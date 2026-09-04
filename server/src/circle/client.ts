@@ -4,7 +4,7 @@ import {
 } from '@circle-fin/developer-controlled-wallets';
 
 import type { AppConfig } from '../config.ts';
-import { toDecimalString, toMinorUnits } from '../config.ts';
+import { parseReportedAmount, toDecimalString } from '../config.ts';
 
 export type CircleClient = ReturnType<typeof initiateDeveloperControlledWalletsClient>;
 
@@ -105,7 +105,7 @@ export class CircleWalletGateway {
     const usdc = balances.find((balance) => balance.token?.id === this.config.chain.usdcTokenId);
     if (!usdc?.amount) return 0n;
 
-    return toMinorUnits(usdc.amount);
+    return parseReportedAmount(usdc.amount);
   }
 
   /** Moves USDC from a wallet the marketplace controls to any address. */

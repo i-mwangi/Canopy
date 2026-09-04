@@ -62,6 +62,19 @@ export function toMinorUnits(amount: string): bigint {
   return BigInt(whole) * USDC_SCALE + BigInt(fraction.padEnd(USDC_DECIMALS, '0') || '0');
 }
 
+/**
+ * Parses an amount reported by an upstream API, which may carry more precision than the ledger
+ * keeps. Extra digits are truncated rather than rejected, since refusing to read a balance is
+ * worse than reading it to the nearest minor unit.
+ */
+export function parseReportedAmount(amount: string): bigint {
+  const trimmed = amount.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) throw new Error(`Invalid amount: ${amount}`);
+
+  const [whole = '0', fraction = ''] = trimmed.split('.');
+  return BigInt(whole) * USDC_SCALE + BigInt(fraction.slice(0, USDC_DECIMALS).padEnd(USDC_DECIMALS, '0') || '0');
+}
+
 export function toDecimalString(minor: bigint): string {
   const negative = minor < 0n;
   const absolute = negative ? -minor : minor;

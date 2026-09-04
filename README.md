@@ -44,6 +44,10 @@ and a later withdrawal would pay them twice out of the operating float.
 USDC is the native gas token on Arc, so fares and fees are denominated in the same asset the
 network charges in. Only the operating and settlement wallets need a gas float.
 
+Arc exposes USDC twice: as the native 18-decimal gas token, and as a 6-decimal ERC-20 at
+`0x3600…0000`. `CIRCLE_USDC_TOKEN_ID` must be the ERC-20 one — the ledger keeps six decimals
+throughout, and gas comes out of the native balance without being asked for.
+
 Wallets are created as EOAs. Smart contract accounts exist for gas sponsorship and batch
 execution; since every wallet here holds the token that pays for gas, an SCA would add a
 per-wallet deployment and a paymaster for nothing.

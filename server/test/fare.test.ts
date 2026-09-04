@@ -8,7 +8,7 @@ import {
     surgeBps,
     type RateCard,
 } from '../src/pricing/fare.ts';
-import { toMinorUnits } from '../src/config.ts';
+import { parseReportedAmount, toMinorUnits } from '../src/config.ts';
 
 const usdc = toMinorUnits;
 
@@ -18,6 +18,23 @@ const rates: RateCard = {
   perTask: usdc('0.5'),
   minimumFare: usdc('3'),
 };
+
+describe('parseReportedAmount', () => {
+  it('reads an amount an upstream API reports', () => {
+    assert.equal(parseReportedAmount('20'), usdc('20'));
+    assert.equal(parseReportedAmount('8.70'), usdc('8.70'));
+  });
+
+  it('truncates precision the ledger does not keep rather than refusing the balance', () => {
+    // The native token on Arc carries 18 decimals; the ledger keeps six.
+    assert.equal(parseReportedAmount('20.000000000000000000'), usdc('20'));
+    assert.equal(parseReportedAmount('1.2345678901234'), usdc('1.234567'));
+  });
+
+  it('still rejects something that is not a number', () => {
+    assert.throws(() => parseReportedAmount('not-a-balance'));
+  });
+});
 
 describe('surge', () => {
   it('prices at 1.0x while at least half the fleet is free', () => {
