@@ -248,6 +248,45 @@ describe('rental lifecycle', () => {
     assert.ok(dear.surgeBps > cheap.surgeBps);
   });
 
+  it('does not leave a spendable balance for an owner paid directly', async () => {
+    // A linked owner controls the payout address themselves, so settlement pays them on
+    // chain and the ledger must not also show a withdrawable platform balance.
+    const linked = await ledger.openAccount({
+      role: 'owner',
+      walletId: '',
+      address: ownerAddress,
+      payoutMode: 'direct',
+    });
+
+    const directory = new InMemoryAccountDirectory();
+    await directory.registerOwner(ownerAddress, linked.id);
+
+    const direct = new RentalService(
+      config,
+      ledger,
+      new InMemoryRentalStore(),
+      chain as never,
+      wallets as never,
+      { treasuryAccountId: linked.id, operatingAccountId: linked.id, revenueAccountId: revenueId },
+      directory,
+      new RentalEventLog(),
+    );
+
+    const rental = await direct.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
+    await direct.completeRental(rental.id, { meteredMinutes: 8, tasksCompleted: 2 });
+    const settled = await direct.settleRental(rental.id);
+
+    assert.equal(settled.ownerPayout, usdc('4.25'));
+
+    // The transfer still happened; the ledger just nets to zero rather than double-counting.
+    assert.ok(wallets.transfers.some((transfer) => transfer.amount === usdc('4.25')));
+    assert.equal((await ledger.balanceOf(linked.id)).available, 0n);
+
+    const entries = await ledger.statement({ accountId: linked.id });
+    assert.ok(entries.some((entry) => entry.kind === 'payout'));
+    assert.ok(entries.some((entry) => entry.kind === 'withdrawal'));
+  });
+
   it('returns the whole hold when a rental is cancelled', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
     await service.cancelRental(rental.id, 'robot faulted before pickup');
