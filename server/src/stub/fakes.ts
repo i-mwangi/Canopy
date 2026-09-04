@@ -242,7 +242,7 @@ export function stubConfig(): AppConfig {
     circle: {
       apiKey: 'stub',
       entitySecret: 'stub',
-      walletSetName: 'stub-robot-marketplace',
+      walletSetName: 'stub-canopy',
     },
     chain: {
       blockchain: 'ARC-TESTNET',

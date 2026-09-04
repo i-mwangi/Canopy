@@ -20,7 +20,7 @@ type AccountContextValue = {
     refresh: () => Promise<void>;
 };
 
-const STORAGE_KEY = 'robot-marketplace-session';
+const STORAGE_KEY = 'canopy-session';
 
 const AccountContext = createContext<AccountContextValue | null>(null);
 

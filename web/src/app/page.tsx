@@ -34,7 +34,7 @@ export default function Landing() {
         <main className='px-14 py-16'>
             <header className='flex items-center gap-x-4'>
                 <Image src='/images/logo.svg' alt='logo' width={66} height={54} className='h-auto' priority />
-                <h4 className='text-secondary'>Robot Rental</h4>
+                <h4 className='text-secondary'>Canopy</h4>
             </header>
 
             <section className='mt-24 max-w-3xl'>

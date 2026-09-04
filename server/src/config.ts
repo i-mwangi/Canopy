@@ -99,7 +99,7 @@ export function loadConfig(): AppConfig {
     circle: {
       apiKey: required('CIRCLE_API_KEY'),
       entitySecret: required('CIRCLE_ENTITY_SECRET'),
-      walletSetName: process.env.CIRCLE_WALLET_SET_NAME ?? 'robot-marketplace',
+      walletSetName: process.env.CIRCLE_WALLET_SET_NAME ?? 'canopy',
     },
     chain: {
       blockchain,

@@ -13,7 +13,7 @@ function provisioningConfig(): AppConfig {
     circle: {
       apiKey,
       entitySecret,
-      walletSetName: process.env.CIRCLE_WALLET_SET_NAME ?? 'robot-marketplace',
+      walletSetName: process.env.CIRCLE_WALLET_SET_NAME ?? 'canopy',
     },
     chain: {
       blockchain: (process.env.CIRCLE_BLOCKCHAIN ?? 'ARC-TESTNET') as 'ARC' | 'ARC-TESTNET',

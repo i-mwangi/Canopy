@@ -15,7 +15,7 @@ const styreneA = localFont({
 });
 
 export const metadata: Metadata = {
-    title: 'Robot Rental',
+    title: 'Canopy',
     description: 'Rent warehouse robots by the minute, settled in USDC on Arc',
 };
 

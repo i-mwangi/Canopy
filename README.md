@@ -1,4 +1,4 @@
-# Robot Rental Marketplace
+# Canopy
 
 A marketplace for renting warehouse robots by the minute, settled in USDC on Arc.
 
