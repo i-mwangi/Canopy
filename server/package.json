@@ -1,0 +1,28 @@
+{
+  "name": "robot-marketplace-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-transform-types --test \"test/**/*.test.ts\"",
+    "register-entity-secret": "node --env-file=.env --experimental-transform-types scripts/register-entity-secret.ts",
+    "provision": "node --env-file=.env --experimental-transform-types scripts/provision-wallets.ts",
+    "start": "node --env-file=.env --experimental-transform-types src/api/server.ts",
+    "start:stub": "node --experimental-transform-types src/api/server.ts"
+  },
+  "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^8.2.0",
+    "express": "^5.1.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
