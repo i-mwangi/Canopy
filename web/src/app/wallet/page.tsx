@@ -48,6 +48,34 @@ export default function Wallet() {
         return () => clearInterval(timer);
     }, [session]);
 
+    useEffect(() => {
+        if (!session) return;
+        let cancelled = false;
+
+        // Deposits normally arrive through a Circle notification, which cannot reach a local
+        // server. Asking the chain on a timer while this page is open means a transfer shows
+        // up on its own rather than waiting for someone to press the button.
+        const sync = async () => {
+            try {
+                const result = await api.syncDeposits(session.accountId);
+                if (cancelled || Number(result.credited) <= 0) return;
+
+                setMessage(`Credited ${usd(result.credited)} USDC.`);
+                await refresh();
+            } catch {
+                // A failed check is not worth interrupting the page for; the next one retries.
+            }
+        };
+
+        void sync();
+        const timer = setInterval(() => void sync(), 15_000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+        };
+    }, [session, refresh]);
+
     if (!session) {
         return (
             <>
@@ -116,9 +144,8 @@ export default function Wallet() {
                         </div>
 
                         <p className='text-sm text-secondary'>
-                            Send USDC on Arc to this address, then check for it. Deposits normally arrive
-                            through a Circle notification; this asks the chain directly, which is what a
-                            local environment with no public URL needs.
+                            Send USDC on Arc to this address. This page checks the chain every 15
+                            seconds, so a transfer appears on its own shortly after it confirms.
                         </p>
 
                         <button
@@ -144,7 +171,7 @@ export default function Wallet() {
                                     .finally(() => setChecking(false));
                             }}
                         >
-                            {checking ? <div className='spinner border-background' /> : 'Check for deposits'}
+                            {checking ? <div className='spinner border-background' /> : 'Check now'}
                         </button>
 
                         <div
