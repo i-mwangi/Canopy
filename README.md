@@ -31,7 +31,15 @@ balance, the meter runs, and exactly one settlement moves the real amount.
 | `operating` | Hot. Funds gas and keeps a working float. Swept to treasury above a ceiling, topped up below a floor. |
 | `revenue` | Receives the platform fee from every settlement. |
 | per-renter | Where a renter deposits. Debited at settlement. |
-| per-owner | Where an owner accrues earnings. Debited on withdrawal to an address they nominate. |
+| per-owner | Where a custodial owner accrues earnings. Debited on withdrawal to an address they nominate. |
+
+Owners come in two kinds. A **custodial** owner banks with the platform: `POST /accounts/owners`
+creates a wallet, earnings accrue there, and they withdraw when they choose. A **linked** owner
+already controls the address their robots are listed under — the account that signed the fleet
+seed, say — so `POST /accounts/owners/link` registers them without creating a wallet, and
+settlement pays that address directly. Their ledger balance nets to zero by design: crediting
+the payout without also recording it as paid out would show a spendable balance no wallet backs,
+and a later withdrawal would pay them twice out of the operating float.
 
 USDC is the native gas token on Arc, so fares and fees are denominated in the same asset the
 network charges in. Only the operating and settlement wallets need a gas float.
@@ -205,8 +213,12 @@ npm run seed
 ```
 
 `listRobot` records `msg.sender` as the owner, so the account that signs the seed owns every
-robot it lists and receives their earnings. Register that address as an owner account on the
-server, or settlement has nowhere to pay out to.
+robot it lists and receives their earnings. Register that address with the server or settlement
+has nowhere to pay out to:
+
+```bash
+curl -X POST localhost:8080/accounts/owners/link   -H 'content-type: application/json'   -d '{"address":"0x…"}'
+```
 
 ## Setup
 
@@ -249,6 +261,7 @@ npm start
 | --- | --- | --- |
 | `POST` | `/accounts/renters` | Provision a renter wallet, returns a deposit address |
 | `POST` | `/accounts/owners` | Provision an owner wallet, returns a payout address |
+| `POST` | `/accounts/owners/link` | Register an owner at an address they already control |
 | `GET` | `/accounts/:id/balance` | Available, held, and total balance |
 | `GET` | `/accounts/:id/statement` | Ledger entries for the account |
 | `POST` | `/accounts/:id/withdrawals` | Pay out to a nominated address |
