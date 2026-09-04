@@ -1,0 +1,193 @@
+@import 'tailwindcss';
+
+:root {
+    --foreground: #222222;
+    --background: white;
+
+    --green: #007c23;
+    --red: #dc2424;
+    --amber: #a86400;
+
+    --secondary: #8c8c8c;
+    --tetriary: #bebebe;
+
+    --gray-background: #f5f5f5;
+    --red-background: #ff8686;
+    --green-background: #c3ffd4;
+    --amber-background: #ffe9b8;
+    --translucent: rgba(1, 1, 1, 0.25);
+
+    --color-1: 0 100% 63%;
+    --color-2: 270 100% 63%;
+    --color-3: 210 100% 63%;
+    --color-4: 195 100% 63%;
+    --color-5: 90 100% 63%;
+}
+
+@theme inline {
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+
+    --color-green: var(--green);
+    --color-red: var(--red);
+    --color-amber: var(--amber);
+
+    --color-secondary: var(--secondary);
+    --color-tetriary: var(--tetriary);
+
+    --color-gray-background: var(--gray-background);
+    --color-green-background: var(--green-background);
+    --color-red-background: var(--red-background);
+    --color-amber-background: var(--amber-background);
+    --color-translucent: var(--translucent);
+
+    --animate-rainbow: rainbow var(--speed, 2s) infinite linear;
+    --animate-meter: meter 1.4s ease-in-out infinite;
+
+    @keyframes rainbow {
+        0% {
+            background-position: 0%;
+        }
+        100% {
+            background-position: 200%;
+        }
+    }
+
+    @keyframes meter {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.25;
+        }
+    }
+}
+
+@layer components {
+    .primary-button,
+    .white-button {
+        padding: 1rem 1.625rem;
+
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        column-gap: 0.25rem;
+
+        border-radius: 0.75rem;
+
+        cursor: pointer;
+        transition: all 250ms linear;
+    }
+
+    .primary-button {
+        color: var(--background);
+        background-color: var(--foreground);
+    }
+
+    .primary-button:disabled {
+        cursor: not-allowed;
+        background-color: var(--tetriary);
+    }
+
+    .white-button {
+        border: 1px solid var(--foreground);
+    }
+
+    .white-button:hover {
+        background-color: var(--gray-background);
+    }
+
+    .green-background,
+    .red-background,
+    .amber-background,
+    .gray-background {
+        text-align: center;
+        padding: 0.5rem 1rem;
+
+        border-radius: 50px;
+    }
+
+    .red-background {
+        color: var(--red);
+        background-color: var(--red-background);
+    }
+
+    .green-background {
+        color: var(--green);
+        background-color: var(--green-background);
+    }
+
+    .amber-background {
+        color: var(--amber);
+        background-color: var(--amber-background);
+    }
+
+    .gray-background {
+        background-color: var(--gray-background);
+    }
+
+    .card-shadow {
+        box-shadow: -10px 10px var(--foreground);
+    }
+
+    .modal-background {
+        position: fixed;
+        top: 0;
+        left: 0;
+
+        width: 100dvw;
+        height: 100dvh;
+
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        background-color: var(--translucent);
+    }
+
+    .note {
+        @apply p-2 flex items-center gap-x-1.5 text-xs bg-gray-background rounded-sm;
+    }
+
+    .spinner {
+        @apply w-4 h-4 border-2 border-foreground border-t-transparent animate-spin rounded-full;
+    }
+
+    .figure-row {
+        @apply p-3.5 flex items-center justify-between border border-secondary rounded-lg;
+    }
+}
+
+@layer base {
+    input,
+    textarea,
+    select {
+        width: stretch;
+
+        padding: 0.5rem;
+
+        border: 1px solid var(--tetriary);
+        border-radius: 5px;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+        outline: none;
+        border-color: var(--foreground);
+    }
+
+    textarea {
+        resize: none;
+
+        height: 5rem;
+    }
+}
+
+body {
+    background: var(--background);
+
+    color: var(--foreground);
+    font-weight: 400;
+}
