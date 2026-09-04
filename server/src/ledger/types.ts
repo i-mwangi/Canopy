@@ -1,11 +1,22 @@
 export type AccountRole = 'renter' | 'owner' | 'treasury' | 'operating' | 'revenue';
 
+/**
+ * How an owner takes their earnings.
+ *
+ * `custodial` owners bank with the platform: a Circle wallet holds the balance and they
+ * withdraw when they choose. `direct` owners are paid straight to an address they already
+ * control at settlement, so the platform never holds their money and there is nothing to
+ * withdraw.
+ */
+export type PayoutMode = 'custodial' | 'direct';
+
 export type Account = {
   id: string;
   role: AccountRole;
-  /** Circle wallet id backing this account. */
+  /** Circle wallet id backing this account. Empty for a direct-payout owner. */
   walletId: string;
   address: `0x${string}`;
+  payoutMode: PayoutMode;
   /** Funds the account may spend right now. */
   available: bigint;
   /** Funds reserved by an open authorization and not yet captured. */

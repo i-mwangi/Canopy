@@ -8,6 +8,7 @@ import {
   type Hold,
   type LedgerEntry,
   type EntryKind,
+  type PayoutMode,
 } from './types.ts';
 
 export interface LedgerStore {
@@ -46,12 +47,14 @@ export class Ledger {
     walletId: string;
     address: `0x${string}`;
     accountId?: string;
+    payoutMode?: PayoutMode;
   }): Promise<Account> {
     const account: Account = {
       id: params.accountId ?? randomUUID(),
       role: params.role,
       walletId: params.walletId,
       address: params.address,
+      payoutMode: params.payoutMode ?? 'custodial',
       available: 0n,
       held: 0n,
       createdAt: Date.now(),
