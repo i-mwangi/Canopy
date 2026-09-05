@@ -289,7 +289,9 @@ export class RentalService {
       phase: 'work',
     });
 
-    return updated;
+    // Finishing the work is what triggers the charge. Leaving a completed rental waiting for
+    // a separate instruction would mean a held balance with nobody left to release it.
+    return this.settleRental(rentalId);
   }
 
   /**

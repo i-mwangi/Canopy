@@ -336,6 +336,15 @@ describe('rental lifecycle', () => {
     assert.ok(chain.calls.includes('cancel'));
   });
 
+  it('settles as soon as the work finishes, with nothing left to press', async () => {
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+    const finished = await service.completeRental(rental.id, { movesCompleted: 4 });
+
+    assert.equal(finished.status, 'settled', 'completing the job must bill it');
+    assert.ok(finished.fare! > 0n);
+    assert.equal((await ledger.balanceOf(renterId)).held, 0n, 'no balance may stay held');
+  });
+
   it('settles only once when called again', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
     await service.completeRental(rental.id, { movesCompleted: 4 });

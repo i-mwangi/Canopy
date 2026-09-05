@@ -12,6 +12,10 @@ import Settlement from '@/components/ui/rental/settlement';
 import { useAccount } from '@/components/account-provider';
 import { SurgePill } from '@/components/ui/status-pill';
 import { api } from '@/lib/api';
+
+// The robot drives itself through its route; a renter has no business stepping it forward.
+// These stand in for the fleet when no simulator is attached, so they are opt-in.
+const SIMULATOR_CONTROLS = process.env.NEXT_PUBLIC_SIMULATOR_CONTROLS === 'true';
 import { cn, elapsedMinutes, shortAddress, usd } from '@/lib/utils';
 import type { Rental, RentalEvent, Robot } from '@/lib/types';
 
@@ -56,12 +60,11 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
             .catch(() => setRobot(null));
     }, [rental?.robotId]);
 
-    async function act(action: 'complete' | 'settle' | 'cancel') {
+    async function act(action: 'complete' | 'cancel') {
         if (!rental) return;
         setBusy(true);
         try {
             if (action === 'complete') await api.complete(rental.id, rental.meter.movesCompleted);
-            if (action === 'settle') await api.settle(rental.id);
             if (action === 'cancel') await api.cancel(rental.id, 'cancelled by renter');
             await load();
             await refresh();
@@ -155,38 +158,33 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
                             <div className='ml-auto flex items-center gap-x-3'>
                                 {running && (
                                     <>
-                                        <button
-                                            className='white-button !py-2.5'
-                                            disabled={busy}
-                                            onClick={() => void completeMove()}
-                                            title={nextMove?.label}
-                                        >
-                                            Complete move {nextMove?.step}
-                                        </button>
+                                        {SIMULATOR_CONTROLS && (
+                                            <>
+                                                <button
+                                                    className='white-button !py-2.5 !border-tetriary text-secondary'
+                                                    disabled={busy}
+                                                    onClick={() => void completeMove()}
+                                                    title={`Simulator: ${nextMove?.label ?? ''}`}
+                                                >
+                                                    Simulate move {nextMove?.step}
+                                                </button>
+                                                <button
+                                                    className='white-button !py-2.5 !border-tetriary text-secondary'
+                                                    disabled={busy}
+                                                    onClick={() => void act('complete')}
+                                                >
+                                                    Simulate finish
+                                                </button>
+                                            </>
+                                        )}
                                         <button
                                             className='white-button !py-2.5'
                                             disabled={busy}
                                             onClick={() => void act('cancel')}
                                         >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            className='primary-button !py-2.5'
-                                            disabled={busy}
-                                            onClick={() => void act('complete')}
-                                        >
-                                            {busy ? <div className='spinner border-background' /> : 'End job'}
+                                            Cancel job
                                         </button>
                                     </>
-                                )}
-                                {rental.status === 'completed' && (
-                                    <button
-                                        className='primary-button !py-2.5'
-                                        disabled={busy}
-                                        onClick={() => void act('settle')}
-                                    >
-                                        {busy ? <div className='spinner border-background' /> : 'Settle fare'}
-                                    </button>
                                 )}
                                 {(rental.status === 'settled' || rental.status === 'cancelled') && (
                                     <Link href='/browse' className='primary-button !py-2.5'>
