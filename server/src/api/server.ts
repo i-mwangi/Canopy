@@ -20,6 +20,7 @@ import {
 import { RentalEventLog } from '../rental/events.ts';
 import { describeLeg, legFor, ZONE_LABELS } from '../rental/legs.ts';
 import { StubChain, StubWalletGateway, stubConfig, STUB_OWNER_ADDRESS } from '../stub/fakes.ts';
+import { withRetry } from '../circle/retry.ts';
 
 const ROBOT_CLASS_NAMES = ['Picking', 'Packing', 'Delivery'] as const;
 
@@ -110,7 +111,16 @@ export async function createServer() {
           walletId: 'stub-fleet-owner',
           address: STUB_OWNER_ADDRESS,
         })
-      : (await accounts.onboardOwner()).account;
+      : (
+          await withRetry(() => accounts.onboardOwner(), {
+            // Boot is worth waiting on: a marketplace that will not start because a name
+            // lookup failed for a second is worse than one that takes a minute to come up.
+            attempts: 6,
+            baseDelayMs: 2_000,
+            maxDelayMs: 20_000,
+            label: 'provisioning the fleet owner wallet',
+          })
+        ).account;
 
     await directory.registerOwner(owner.address, owner.id);
     chain = new StubChain(owner.address) as never as RentalChain;
@@ -424,6 +434,15 @@ if (invokedDirectly) {
       });
     })
     .catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+
+      if (/ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT/.test(reason)) {
+        console.error(
+          'Could not reach Circle to start up, after retrying. Check the network and the ' +
+            'API key, then start again.',
+        );
+      }
+
       console.error(error);
       process.exitCode = 1;
     });

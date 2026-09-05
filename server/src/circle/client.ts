@@ -5,6 +5,7 @@ import {
   type Blockchain,
 } from '@circle-fin/developer-controlled-wallets';
 
+import { withRetry } from './retry.ts';
 import type { AppConfig } from '../config.ts';
 import { parseReportedAmount, toDecimalString } from '../config.ts';
 
@@ -71,7 +72,9 @@ export class CircleWalletGateway {
 
   /** Creates the wallet set that scopes every wallet the marketplace controls. */
   async createWalletSet(name = this.config.circle.walletSetName): Promise<string> {
-    const response = await this.client.createWalletSet({ name });
+    const response = await withRetry(() => this.client.createWalletSet({ name }), {
+      label: 'createWalletSet',
+    });
     const walletSetId = response.data?.walletSet?.id;
     if (!walletSetId) throw new Error('Circle did not return a wallet set id');
     return walletSetId;
@@ -86,13 +89,19 @@ export class CircleWalletGateway {
     count: number,
     options: { accountType?: 'EOA' | 'SCA'; refId?: string } = {},
   ): Promise<ProvisionedWallet[]> {
-    const response = await this.client.createWallets({
-      walletSetId,
-      blockchains: [this.config.chain.blockchain as Blockchain],
-      count,
-      accountType: options.accountType ?? DEFAULT_ACCOUNT_TYPE,
-      ...(options.refId ? { refId: options.refId } : {}),
-    });
+    // A retry here can orphan an empty wallet if the response was lost rather than the
+    // request, which is wasteful but harmless. Failing to boot over a DNS blip is worse.
+    const response = await withRetry(
+      () =>
+        this.client.createWallets({
+          walletSetId,
+          blockchains: [this.config.chain.blockchain as Blockchain],
+          count,
+          accountType: options.accountType ?? DEFAULT_ACCOUNT_TYPE,
+          ...(options.refId ? { refId: options.refId } : {}),
+        }),
+      { label: 'createWallets' },
+    );
 
     const wallets = response.data?.wallets ?? [];
     if (wallets.length !== count) {
@@ -119,7 +128,9 @@ export class CircleWalletGateway {
 
   /** Finds a wallet the marketplace already controls by its address. */
   async findWalletByAddress(address: `0x${string}`): Promise<ProvisionedWallet | undefined> {
-    const response = await this.client.listWallets({ address });
+    const response = await withRetry(() => this.client.listWallets({ address }), {
+      label: 'listWallets',
+    });
     const wallet = (response.data?.wallets ?? []).find(
       (candidate) => candidate.address.toLowerCase() === address.toLowerCase(),
     );
@@ -135,7 +146,10 @@ export class CircleWalletGateway {
 
   /** On-chain USDC balance for a wallet, in minor units. */
   async getUsdcBalance(walletId: string): Promise<bigint> {
-    const response = await this.client.getWalletTokenBalance({ id: walletId, includeAll: true });
+    const response = await withRetry(
+      () => this.client.getWalletTokenBalance({ id: walletId, includeAll: true }),
+      { label: 'getWalletTokenBalance' },
+    );
 
     const balances = response.data?.tokenBalances ?? [];
     const usdc = balances.find((balance) => balance.token?.id === this.config.chain.usdcTokenId);
@@ -154,15 +168,21 @@ export class CircleWalletGateway {
   }): Promise<TransferReceipt> {
     if (params.amount <= 0n) throw new Error('Transfer amount must be positive');
 
-    const response = await this.client.createTransaction({
-      walletId: params.walletId,
-      tokenId: this.config.chain.usdcTokenId,
-      destinationAddress: params.destinationAddress,
-      amount: [toDecimalString(params.amount)],
-      idempotencyKey: idempotencyUuid(params.idempotencyKey),
-      fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
-      ...(params.refId ? { refId: params.refId } : {}),
-    });
+    // Safe to retry: the idempotency key is derived from the semantic key, so Circle returns
+    // the original transaction rather than sending a second transfer.
+    const response = await withRetry(
+      () =>
+        this.client.createTransaction({
+          walletId: params.walletId,
+          tokenId: this.config.chain.usdcTokenId,
+          destinationAddress: params.destinationAddress,
+          amount: [toDecimalString(params.amount)],
+          idempotencyKey: idempotencyUuid(params.idempotencyKey),
+          fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+          ...(params.refId ? { refId: params.refId } : {}),
+        }),
+      { label: 'createTransaction' },
+    );
 
     const transaction = response.data;
     if (!transaction?.id) throw new Error('Circle did not return a transaction id');
@@ -178,14 +198,18 @@ export class CircleWalletGateway {
     abiParameters: unknown[];
     idempotencyKey: string;
   }): Promise<TransferReceipt> {
-    const response = await this.client.createContractExecutionTransaction({
-      walletId: params.walletId,
-      contractAddress: params.contractAddress,
-      abiFunctionSignature: params.abiFunctionSignature,
-      abiParameters: params.abiParameters as never,
-      idempotencyKey: idempotencyUuid(params.idempotencyKey),
-      fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
-    });
+    const response = await withRetry(
+      () =>
+        this.client.createContractExecutionTransaction({
+          walletId: params.walletId,
+          contractAddress: params.contractAddress,
+          abiFunctionSignature: params.abiFunctionSignature,
+          abiParameters: params.abiParameters as never,
+          idempotencyKey: idempotencyUuid(params.idempotencyKey),
+          fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+        }),
+      { label: 'createContractExecution' },
+    );
 
     const transaction = response.data;
     if (!transaction?.id) throw new Error('Circle did not return a transaction id');
@@ -194,7 +218,9 @@ export class CircleWalletGateway {
   }
 
   async getTransaction(transactionId: string): Promise<TransferReceipt> {
-    const response = await this.client.getTransaction({ id: transactionId });
+    const response = await withRetry(() => this.client.getTransaction({ id: transactionId }), {
+      label: 'getTransaction',
+    });
     const transaction = response.data?.transaction;
     if (!transaction) throw new Error(`Unknown transaction ${transactionId}`);
 

@@ -350,6 +350,12 @@ the renter's balance.
   `groupId` — that index is what makes deposit and settlement replay-safe. Nothing above the
   store interface changes.
 - The entity secret belongs in a secrets manager or HSM, never in `.env` and never in logs.
+- Calls to Circle retry transient failures — a name lookup blip, a dropped connection, a rate
+  limit, a 5xx — with exponential backoff. A request Circle *rejected* is never repeated, since
+  it would fail identically and bury the real cause. Transfers are safe to retry because the
+  idempotency key makes a replay return the original transaction rather than send a second one.
+  Startup retries harder than the request path: the marketplace waits rather than refusing to
+  boot because DNS hiccuped.
 - Deposits arrive through the Circle notification sink, which needs a public URL. Locally
   there isn't one, so `POST /accounts/:id/deposits/sync` reads the wallet balance and credits
   whatever the ledger cannot account for. Keep it in production as a backstop for a dropped
