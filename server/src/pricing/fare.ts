@@ -148,3 +148,90 @@ export function authorizationAmount(params: {
 
   return applyBps(worstCase.total, params.bufferBps);
 }
+
+export type LegPricing = {
+  rates: RateCard;
+  surgeBps: number;
+  /** Minutes this robot was occupied. Measured, never supplied by a caller. */
+  meteredMinutes: number;
+  /** Whole legs finished by this robot. */
+  tasksCompleted: number;
+};
+
+export type LegSettlement = {
+  fare: bigint;
+  platformFee: bigint;
+  ownerPayout: bigint;
+};
+
+/**
+ * Prices an order leg by leg.
+ *
+ * Each leg is charged on its own robot's rate card and its own surge, because a different
+ * owner is paid for each. The fee is taken per leg so that every owner's share and the
+ * platform's share add up to the order total exactly, with no rounding gap to absorb.
+ */
+export function settleOrder(params: {
+  legs: LegPricing[];
+  platformFeeBps: number;
+  authorizedAmount: bigint;
+}): { total: bigint; platformFee: bigint; legs: LegSettlement[] } {
+  const priced = params.legs.map((leg) => {
+    const fare = quoteFare({
+      rates: leg.rates,
+      reading: { meteredMinutes: leg.meteredMinutes, tasksCompleted: leg.tasksCompleted },
+      surgeBps: leg.surgeBps,
+      platformFeeBps: 0,
+    }).total;
+
+    const { platformFee, ownerPayout } = splitFare(fare, params.platformFeeBps);
+    return { fare, platformFee, ownerPayout };
+  });
+
+  const total = priced.reduce((sum, leg) => sum + leg.fare, 0n);
+
+  // An overrun is capped at what was authorised. Scaling every leg back by the same ratio
+  // keeps the shares proportional to the work each robot actually did.
+  if (total > params.authorizedAmount && total > 0n) {
+    const scaled = priced.map((leg) => {
+      const fare = (leg.fare * params.authorizedAmount) / total;
+      const { platformFee, ownerPayout } = splitFare(fare, params.platformFeeBps);
+      return { fare, platformFee, ownerPayout };
+    });
+
+    // Rounding down each leg can leave a few units short of the cap; that remainder simply
+    // stays with the renter rather than being invented for someone.
+    return {
+      total: scaled.reduce((sum, leg) => sum + leg.fare, 0n),
+      platformFee: scaled.reduce((sum, leg) => sum + leg.platformFee, 0n),
+      legs: scaled,
+    };
+  }
+
+  return {
+    total,
+    platformFee: priced.reduce((sum, leg) => sum + leg.platformFee, 0n),
+    legs: priced,
+  };
+}
+
+/** What to hold for an order: every leg running its full allowance, plus the buffer. */
+export function orderAuthorization(params: {
+  legs: { rates: RateCard; surgeBps: number }[];
+  maxBillableMinutes: number;
+  bufferBps: number;
+}): bigint {
+  const worstCase = params.legs.reduce(
+    (sum, leg) =>
+      sum +
+      quoteFare({
+        rates: leg.rates,
+        reading: { meteredMinutes: params.maxBillableMinutes, tasksCompleted: 1 },
+        surgeBps: leg.surgeBps,
+        platformFeeBps: 0,
+      }).total,
+    0n,
+  );
+
+  return applyBps(worstCase, params.bufferBps);
+}

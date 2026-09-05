@@ -1,5 +1,4 @@
 import { cn } from '@/lib/utils';
-import type { RobotClass } from '@/lib/types';
 
 /**
  * The warehouse route, drawn rather than pictured.
@@ -10,9 +9,7 @@ import type { RobotClass } from '@/lib/types';
  */
 
 type Props = {
-    /** Which leg this rental runs. Others are drawn faintly for context. */
-    activeClass?: RobotClass;
-    /** Moves finished so far, so the arrows fill in as work lands. */
+    /** Moves finished across the whole order, so arrows fill in as the item travels. */
     completedMoves?: number;
     running?: boolean;
     className?: string;
@@ -47,12 +44,10 @@ const ROBOTS = [
     { class_: 'Delivery' as const, x: 496, y: 214 },
 ];
 
-export default function FloorPlan({ activeClass, completedMoves = 0, running, className }: Props) {
-    const isActive = (lane: string) => activeClass === undefined || lane === activeClass;
-
-    // Moves belong to a leg, so "two done" means this leg's two arrows, not arrows one and two.
-    const legMoves = MOVES.filter((move) => move.class_ === activeClass).map((move) => move.step);
-    const doneSteps = new Set(legMoves.slice(0, completedMoves));
+export default function FloorPlan({ completedMoves = 0, running, className }: Props) {
+    // An order runs the whole route, so the arrows are simply the first N steps.
+    const doneSteps = new Set(MOVES.slice(0, completedMoves).map((move) => move.step));
+    const currentLane = MOVES[Math.min(MOVES.length - 1, completedMoves)]?.class_;
 
     return (
         <svg viewBox='0 0 620 400' className={cn('w-full h-auto', className)} role='img'>
@@ -73,7 +68,7 @@ export default function FloorPlan({ activeClass, completedMoves = 0, running, cl
             ))}
 
             {ZONES.map((zone) => (
-                <g key={zone.label} opacity={isActive(zone.lane) ? 1 : 0.25}>
+                <g key={zone.label}>
                     <rect
                         x={zone.x}
                         y={zone.y}
@@ -105,7 +100,7 @@ export default function FloorPlan({ activeClass, completedMoves = 0, running, cl
 
             {MOVES.map((move) => {
                 const done = doneSteps.has(move.step);
-                const dim = !isActive(move.class_);
+                const dim = false;
 
                 return (
                     <g key={move.step} opacity={dim ? 0.18 : 1}>
@@ -139,11 +134,10 @@ export default function FloorPlan({ activeClass, completedMoves = 0, running, cl
             })}
 
             {ROBOTS.map((robot) => {
-                const dim = !isActive(robot.class_);
-                const working = running && robot.class_ === activeClass;
+                const working = running && robot.class_ === currentLane;
 
                 return (
-                    <g key={robot.class_} opacity={dim ? 0.18 : 1} transform={`translate(${robot.x} ${robot.y})`}>
+                    <g key={robot.class_} transform={`translate(${robot.x} ${robot.y})`}>
                         <rect x='-14' y='0' width='28' height='14' rx='3' fill='var(--foreground)' />
                         <circle cx='-8' cy='17' r='4' fill='var(--foreground)' />
                         <circle cx='8' cy='17' r='4' fill='var(--foreground)' />

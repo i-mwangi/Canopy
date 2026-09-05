@@ -16,18 +16,13 @@ interface Props {
 export default function Floor({ rental, runtimeMinutes, liveFare, className }: Props) {
     const running = rental.status === 'active';
 
-    // Arrows show progress through the leg being run now. A finished leg leaves both filled,
-    // and the next approach starts the pair again.
-    const { movesCompleted } = rental.meter;
-    const movesInCurrentLeg = movesCompleted === 0 ? 0 : movesCompleted % 2 === 0 ? 2 : 1;
-
     return (
         <section className={className}>
             <section className='mb-4 flex items-center gap-x-2.5'>
                 <h4>Warehouse Floor</h4>
                 <figure className='note'>
                     <Image src='/images/icons/power.svg' alt='power' height={8} width={8} />
-                    <h6>{running ? 'Robot working' : 'Idle'}</h6>
+                    <h6>{running ? 'Order in progress' : 'Idle'}</h6>
                 </figure>
             </section>
 
@@ -39,18 +34,14 @@ export default function Floor({ rental, runtimeMinutes, liveFare, className }: P
                     </figure>
 
                     <figure className='px-3 py-2 border border-secondary rounded-lg text-right'>
-                        <h6 className='text-xs text-secondary'>Runtime billed</h6>
+                        <h6 className='text-xs text-secondary'>Order runtime</h6>
                         <h3 className='text-2xl font-medium tabular-nums'>
                             {formatDuration(runtimeMinutes)}
                         </h3>
                     </figure>
                 </div>
 
-                <FloorPlan
-                    activeClass={rental.class}
-                    completedMoves={movesInCurrentLeg}
-                    running={running}
-                />
+                <FloorPlan completedMoves={rental.movesCompleted} running={running} />
 
                 <div className='flex items-center justify-between gap-x-4 text-sm'>
                     <div className='flex items-center gap-x-3'>
@@ -61,14 +52,15 @@ export default function Floor({ rental, runtimeMinutes, liveFare, className }: P
                             width={24}
                             className={cn('h-auto', running && 'animate-meter')}
                         />
-                        <div>
-                            <h6 className='text-xs text-secondary'>Robot #{rental.robotId}</h6>
-                            <h5>{rental.leg.description}</h5>
-                        </div>
+                        <h5>
+                            {rental.movesCompleted === 0
+                                ? 'Waiting for the first robot'
+                                : rental.legs[Math.min(2, Math.floor((rental.movesCompleted - 1) / 2))]!.leg
+                                      .description}
+                        </h5>
                     </div>
                     <h5 className='tabular-nums'>
-                        {rental.meter.tasksCompleted} × {rental.leg.name} · {movesCompleted} moves ·{' '}
-                        {Math.ceil(runtimeMinutes)} min billed
+                        {rental.movesCompleted} of {rental.movesTotal} moves
                     </h5>
                 </div>
             </section>

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 
 import NavBar from '@/components/ui/nav-bar';
 import RobotCard from '@/components/robot-card';
-import RentModal from '@/components/rent-modal';
+import OrderModal from '@/components/order-modal';
 import { useAccount } from '@/components/account-provider';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -19,7 +19,7 @@ export default function Browse() {
 
     const [robots, setRobots] = useState<Robot[] | null>(null);
     const [filter, setFilter] = useState<RobotClass | 'All'>('All');
-    const [selected, setSelected] = useState<Robot | null>(null);
+    const [ordering, setOrdering] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -57,6 +57,12 @@ export default function Browse() {
                         </p>
                     </div>
 
+                    <div className='flex items-center gap-x-4'>
+                    {session && (
+                        <button className='primary-button !py-2.5' onClick={() => setOrdering(true)}>
+                            Place an order
+                        </button>
+                    )}
                     <ul className='flex items-center gap-x-2'>
                         {CLASSES.map((option) => (
                             <li key={option}>
@@ -74,6 +80,7 @@ export default function Browse() {
                             </li>
                         ))}
                     </ul>
+                    </div>
                 </header>
 
                 {error && <p className='mt-10 text-red'>{error}</p>}
@@ -82,11 +89,7 @@ export default function Browse() {
                     {visible === null
                         ? Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} />)
                         : visible.map((robot) => (
-                              <RobotCard
-                                  key={robot.id}
-                                  robot={robot}
-                                  onRent={session ? setSelected : undefined}
-                              />
+                              <RobotCard key={robot.id} robot={robot} />
                           ))}
                 </section>
 
@@ -95,11 +98,10 @@ export default function Browse() {
                 )}
             </main>
 
-            {selected && session && (
-                <RentModal
-                    robot={selected}
+            {ordering && session && (
+                <OrderModal
                     accountId={session.accountId}
-                    onClose={() => setSelected(null)}
+                    onClose={() => setOrdering(false)}
                     onStarted={(rentalId) => router.push(`/rentals/${rentalId}`)}
                 />
             )}

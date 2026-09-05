@@ -14,6 +14,7 @@ import {
   InMemoryAccountDirectory,
   InMemoryRentalStore,
   RentalService,
+  MOVES_PER_ORDER,
   type PlatformAccounts,
   type Rental,
 } from '../rental/service.ts';
@@ -40,20 +41,38 @@ const ROBOT_STATUS_NAMES = ['Unlisted', 'Available', 'Rented', 'Maintenance'] as
 function renderRental(rental: Rental) {
   return {
     id: rental.id,
-    onChainId: rental.onChainId?.toString(),
-    robotId: rental.robotId.toString(),
-    class: ROBOT_CLASS_NAMES[rental.class_],
-    leg: renderLeg(rental.class_),
     status: rental.status,
-    surgeBps: rental.surgeBps,
     authorized: toDecimalString(rental.authorizedAmount),
-    meter: rental.reading,
+    movesCompleted: rental.movesCompleted,
+    movesTotal: MOVES_PER_ORDER,
+    legs: rental.legs.map((leg) => ({
+      class: ROBOT_CLASS_NAMES[leg.class_],
+      robotId: leg.robotId.toString(),
+      onChainId: leg.onChainId?.toString(),
+      surgeBps: leg.surgeBps,
+      movesCompleted: leg.movesCompleted,
+      leg: renderLeg(leg.class_),
+      rates: renderRates(leg.rates),
+      fare: leg.fare === undefined ? undefined : toDecimalString(leg.fare),
+      platformFee: leg.platformFee === undefined ? undefined : toDecimalString(leg.platformFee),
+      ownerPayout: leg.ownerPayout === undefined ? undefined : toDecimalString(leg.ownerPayout),
+      startedAt: leg.startedAt,
+      endedAt: leg.endedAt,
+    })),
     fare: rental.fare === undefined ? undefined : toDecimalString(rental.fare),
     platformFee: rental.platformFee === undefined ? undefined : toDecimalString(rental.platformFee),
-    ownerPayout: rental.ownerPayout === undefined ? undefined : toDecimalString(rental.ownerPayout),
     settlementRef: rental.settlementRef,
     startedAt: rental.startedAt,
     endedAt: rental.endedAt,
+  };
+}
+
+function renderRates(rates: { baseFare: bigint; perMinute: bigint; perTask: bigint; minimumFare: bigint }) {
+  return {
+    baseFare: toDecimalString(rates.baseFare),
+    perMinute: toDecimalString(rates.perMinute),
+    perTask: toDecimalString(rates.perTask),
+    minimumFare: toDecimalString(rates.minimumFare),
   };
 }
 
@@ -295,31 +314,26 @@ export async function createServer() {
     );
   });
 
-  app.post('/rentals/quote', async (req, res) => {
-    const quote = await rentals.quote({
-      robotId: BigInt(req.body.robotId),
-      estimatedTasks: Number(req.body.estimatedTasks ?? 0),
-    });
+  app.post('/rentals/quote', async (_req, res) => {
+    const quote = await rentals.quote();
 
     res.json({
-      robotId: quote.robotId.toString(),
-      surgeBps: quote.surgeBps,
-      estimatedFare: toDecimalString(quote.fare.total),
-      platformFee: toDecimalString(quote.fare.platformFee),
-      ownerPayout: toDecimalString(quote.fare.ownerPayout),
+      legs: quote.legs.map((leg) => ({
+        class: ROBOT_CLASS_NAMES[leg.class_],
+        robotId: leg.robotId.toString(),
+        surgeBps: leg.surgeBps,
+        leg: renderLeg(leg.class_),
+        rates: renderRates(leg.rates),
+      })),
+      fareFloor: toDecimalString(quote.fareFloor),
       authorizationHold: toDecimalString(quote.authorization),
       maxBillableMinutes: quote.maxBillableMinutes,
-      perMinute: toDecimalString(quote.rates.perMinute),
+      platformFeeBps: quote.platformFeeBps,
     });
   });
 
   app.post('/rentals', async (req, res) => {
-    const rental = await rentals.startRental({
-      robotId: BigInt(req.body.robotId),
-      renterAccountId: req.body.renterAccountId,
-      estimatedTasks: Number(req.body.estimatedTasks ?? 0),
-    });
-
+    const rental = await rentals.startRental({ renterAccountId: req.body.renterAccountId });
     res.status(201).json(renderRental(rental));
   });
 

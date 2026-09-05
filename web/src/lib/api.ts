@@ -59,17 +59,10 @@ export const api = {
 
     robots: () => request<Robot[]>('/robots'),
 
-    quote: (robotId: string, estimatedTasks: number) =>
-        request<Quote>('/rentals/quote', {
-            method: 'POST',
-            body: JSON.stringify({ robotId, estimatedTasks }),
-        }),
+    quote: () => request<Quote>('/rentals/quote', { method: 'POST', body: '{}' }),
 
-    startRental: (robotId: string, renterAccountId: string, estimatedTasks: number) =>
-        request<Rental>('/rentals', {
-            method: 'POST',
-            body: JSON.stringify({ robotId, renterAccountId, estimatedTasks }),
-        }),
+    startRental: (renterAccountId: string) =>
+        request<Rental>('/rentals', { method: 'POST', body: JSON.stringify({ renterAccountId }) }),
 
     rental: (rentalId: string) => request<Rental>(`/rentals/${rentalId}`),
 

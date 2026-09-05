@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 
 import {
     authorizationAmount,
+    orderAuthorization,
     quoteFare,
+    settleOrder,
     splitFare,
     surgeBps,
     type RateCard,
@@ -194,4 +196,69 @@ describe('authorizationAmount', () => {
 
     assert.ok(hold > ranFull);
   });
+});
+
+describe('settleOrder', () => {
+    const picking: RateCard = { baseFare: usdc('2'), perMinute: usdc('0.35'), perTask: usdc('0.60'), minimumFare: usdc('3') };
+    const packing: RateCard = { baseFare: usdc('1.5'), perMinute: usdc('0.25'), perTask: usdc('0.45'), minimumFare: usdc('2.5') };
+    const delivery: RateCard = { baseFare: usdc('3'), perMinute: usdc('0.5'), perTask: usdc('0.9'), minimumFare: usdc('4') };
+
+    const legs = [picking, packing, delivery].map((rates) => ({
+        rates,
+        surgeBps: 10_000,
+        meteredMinutes: 2,
+        tasksCompleted: 1,
+    }));
+
+    it('prices each leg on its own robot rate card', () => {
+        const order = settleOrder({ legs, platformFeeBps: 1_500, authorizedAmount: usdc('100') });
+
+        // 2 + 0.70 + 0.60 = 3.30 | 1.5 + 0.50 + 0.45 = 2.45, floored to the 2.50 minimum
+        // | 3 + 1.00 + 0.90 = 4.90. Each leg keeps its own rate card's floor.
+        assert.deepEqual(
+            order.legs.map((leg) => leg.fare),
+            [usdc('3.30'), usdc('2.50'), usdc('4.90')],
+        );
+        assert.equal(order.total, usdc('10.70'));
+    });
+
+    it('keeps every owner share plus the fee equal to the total', () => {
+        const order = settleOrder({ legs, platformFeeBps: 1_500, authorizedAmount: usdc('100') });
+
+        const paidOut = order.legs.reduce((sum, leg) => sum + leg.ownerPayout, 0n);
+        assert.equal(paidOut + order.platformFee, order.total);
+    });
+
+    it('scales the legs back proportionally when an order overruns its authorization', () => {
+        const capped = settleOrder({ legs, platformFeeBps: 1_500, authorizedAmount: usdc('5') });
+
+        assert.ok(capped.total <= usdc('5'), 'never bills above the hold');
+
+        const paidOut = capped.legs.reduce((sum, leg) => sum + leg.ownerPayout, 0n);
+        assert.equal(paidOut + capped.platformFee, capped.total, 'the split still balances');
+
+        // The delivery leg did the most expensive work, so it keeps the largest share.
+        assert.ok(capped.legs[2]!.fare > capped.legs[1]!.fare);
+    });
+
+    it('holds enough for every leg to run its full allowance', () => {
+        const hold = orderAuthorization({
+            legs: [picking, packing, delivery].map((rates) => ({ rates, surgeBps: 10_000 })),
+            maxBillableMinutes: 5,
+            bufferBps: 13_000,
+        });
+
+        const settled = settleOrder({
+            legs: [picking, packing, delivery].map((rates) => ({
+                rates,
+                surgeBps: 10_000,
+                meteredMinutes: 5,
+                tasksCompleted: 1,
+            })),
+            platformFeeBps: 1_500,
+            authorizedAmount: hold,
+        });
+
+        assert.ok(hold > settled.total, 'a full-length order must still fit inside the hold');
+    });
 });

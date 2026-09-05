@@ -19,19 +19,16 @@ const CLASS_ART: Record<Robot['class'], { src: string; mirrored: boolean }> = {
 
 interface Props {
     robot: Robot;
-    onRent?: (robot: Robot) => void;
 }
 
-export default function RobotCard({ robot, onRent }: Props) {
+export default function RobotCard({ robot }: Props) {
     const art = CLASS_ART[robot.class];
-    const rentable = robot.status === 'Available';
-
     return (
         <section className='flex flex-col text-center'>
             <section
                 className={cn(
                     'min-w-fit w-72 px-6 py-7 flex flex-col gap-y-4 items-center border border-foreground rounded-lg',
-                    !onRent && 'card-shadow',
+                    'card-shadow',
                 )}
             >
                 <div className='w-full flex items-center justify-between'>
@@ -67,15 +64,6 @@ export default function RobotCard({ robot, onRent }: Props) {
                     </div>
                 </section>
 
-                {onRent && (
-                    <button
-                        className='w-full text-xl primary-button'
-                        disabled={!rentable}
-                        onClick={() => onRent(robot)}
-                    >
-                        {rentable ? 'Rent' : robot.status}
-                    </button>
-                )}
             </section>
 
             <h6 className='mt-6 text-xs text-secondary'>Owner {robot.owner.slice(0, 6)}…{robot.owner.slice(-4)}</h6>

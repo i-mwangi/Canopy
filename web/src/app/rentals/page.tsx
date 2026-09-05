@@ -7,7 +7,7 @@ import NavBar from '@/components/ui/nav-bar';
 import { useAccount } from '@/components/account-provider';
 import { RentalStatusPill } from '@/components/ui/status-pill';
 import Image from 'next/image';
-import { formatDuration, usd } from '@/lib/utils';
+import { usd } from '@/lib/utils';
 import type { Rental } from '@/lib/types';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -68,7 +68,9 @@ export default function Rentals() {
                             >
                                 <div className='flex items-center gap-x-5'>
                                     <div>
-                                        <h3 className='text-xl'>Robot #{rental.robotId}</h3>
+                                        <h3 className='text-xl'>
+                                            Order #{rental.id.slice(0, 8).toUpperCase()}
+                                        </h3>
                                         <h6 className='mt-1 text-xs text-secondary'>
                                             {new Date(rental.startedAt).toLocaleString()}
                                         </h6>
@@ -77,8 +79,11 @@ export default function Rentals() {
                                 </div>
 
                                 <div className='flex items-center gap-x-10 text-sm'>
-                                    <Cell label='Runtime' value={formatDuration(rental.meter.meteredMinutes)} />
-                                    <Cell label='Tasks' value={rental.meter.tasksCompleted.toString()} />
+                                    <Cell label='Robots' value={rental.legs.length.toString()} />
+                                    <Cell
+                                        label='Moves'
+                                        value={`${rental.movesCompleted}/${rental.movesTotal}`}
+                                    />
                                     <Cell
                                         label={rental.fare ? 'Charged' : 'Held'}
                                         value={`${usd(rental.fare ?? rental.authorized)} USDC`}

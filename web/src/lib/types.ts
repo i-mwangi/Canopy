@@ -38,33 +38,49 @@ export type MeterReading = {
 
 export type RentalStatus = 'active' | 'completed' | 'settled' | 'cancelled';
 
-export type Rental = {
-    id: string;
-    onChainId?: string;
-    robotId: string;
+export type RentalLeg = {
     class: RobotClass;
-    leg: TaskLeg;
-    status: RentalStatus;
+    robotId: string;
+    onChainId?: string;
     surgeBps: number;
-    authorized: string;
-    meter: MeterReading;
+    movesCompleted: number;
+    leg: TaskLeg;
+    rates: RateCard;
     fare?: string;
     platformFee?: string;
     ownerPayout?: string;
+    startedAt?: number;
+    endedAt?: number;
+};
+
+export type Rental = {
+    id: string;
+    status: RentalStatus;
+    authorized: string;
+    movesCompleted: number;
+    movesTotal: number;
+    legs: RentalLeg[];
+    fare?: string;
+    platformFee?: string;
     settlementRef?: string;
     startedAt: number;
     endedAt?: number;
 };
 
-export type Quote = {
+export type QuoteLeg = {
+    class: RobotClass;
     robotId: string;
     surgeBps: number;
-    estimatedFare: string;
-    platformFee: string;
-    ownerPayout: string;
+    leg: TaskLeg;
+    rates: RateCard;
+};
+
+export type Quote = {
+    legs: QuoteLeg[];
+    fareFloor: string;
     authorizationHold: string;
     maxBillableMinutes: number;
-    perMinute: string;
+    platformFeeBps: number;
 };
 
 export type Balance = {

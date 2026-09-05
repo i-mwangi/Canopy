@@ -31,6 +31,9 @@ STATE_DIR = os.environ.get("ROBOT_STATE_DIR", "./state")
 # one arrow at a time rather than jumping a whole leg at once.
 MOVES_PER_TASK = 2
 
+# An order is picked, packed and delivered, one robot per leg.
+ORDER_CLASSES = ("Picking", "Packing", "Delivery")
+
 app = Flask(__name__)
 
 
@@ -39,10 +42,10 @@ class Job:
     """One dispatched rental, tracked while its robot works."""
 
     rental_id: str
-    robot_id: str
-    robot_class: str
+    """One dispatched order, tracked while its three robots work in turn."""
+
+    robots: dict
     started_at: float
-    tasks_total: int
     moves_completed: int = 0
     finished: bool = False
     error: Optional[str] = None
@@ -118,11 +121,17 @@ def meter_loop(job: Job) -> None:
 
 
 def run_job(job: Job) -> None:
-    """Drives the robot through the job, one move at a time."""
+    """Drives the order through its three legs, one move at a time.
+
+    The legs run in sequence because each hands the item to the next: nothing can be packed
+    before it is picked.
+    """
     try:
-        for index in range(job.tasks_total):
+        for index, robot_class in enumerate(ORDER_CLASSES):
+            robot_id = job.robots[robot_class]
+
             for move in range(MOVES_PER_TASK):
-                bridge.run_task(job.robot_class, job.robot_id, job.rental_id, index, move)
+                bridge.run_task(robot_class, robot_id, job.rental_id, index, move)
                 with job.lock:
                     job.moves_completed = index * MOVES_PER_TASK + move + 1
 
@@ -138,7 +147,8 @@ def run_job(job: Job) -> None:
     finally:
         with job.lock:
             job.finished = True
-        bridge.release(job.robot_class, job.robot_id)
+        for robot_class, robot_id in job.robots.items():
+            bridge.release(robot_class, robot_id)
 
 
 @app.post("/dispatch")
@@ -149,35 +159,38 @@ def dispatch():
 
     payload = request.get_json(silent=True) or {}
     rental_id = payload.get("rentalId")
-    robot_id = str(payload.get("robotId", ""))
-    robot_class = payload.get("robotClass", "Picking")
-    tasks_total = int(payload.get("tasks", 1))
+    robots = payload.get("robots") or {}
 
-    if not rental_id or not robot_id:
-        return jsonify({"error": "rentalId and robotId are required"}), 400
+    missing = [name for name in ORDER_CLASSES if not robots.get(name)]
+    if not rental_id or missing:
+        return jsonify({"error": f"rentalId and a robot per leg are required; missing {missing}"}), 400
 
     with jobs_lock:
         if rental_id in jobs:
-            return jsonify({"error": "rental already dispatched"}), 409
+            return jsonify({"error": "order already dispatched"}), 409
 
+        claimed = []
         try:
-            bridge.claim(robot_class, robot_id)
+            for robot_class in ORDER_CLASSES:
+                bridge.claim(robot_class, str(robots[robot_class]))
+                claimed.append((robot_class, str(robots[robot_class])))
         except RobotUnavailable as error:
+            # An order needs all three; releasing what was taken avoids stranding a robot.
+            for robot_class, robot_id in claimed:
+                bridge.release(robot_class, robot_id)
             return jsonify({"error": str(error)}), 503
 
         job = Job(
             rental_id=rental_id,
-            robot_id=robot_id,
-            robot_class=robot_class,
+            robots={name: str(robots[name]) for name in ORDER_CLASSES},
             started_at=time.monotonic(),
-            tasks_total=tasks_total,
         )
         jobs[rental_id] = job
 
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     threading.Thread(target=meter_loop, args=(job,), daemon=True).start()
 
-    return jsonify({"state": "dispatched", "rentalId": rental_id, "robotId": robot_id}), 202
+    return jsonify({"state": "dispatched", "rentalId": rental_id, "robots": job.robots}), 202
 
 
 @app.get("/jobs/<rental_id>")
@@ -193,8 +206,7 @@ def job_status(rental_id: str):
         return jsonify(
             {
                 "rentalId": job.rental_id,
-                "robotId": job.robot_id,
-                "robotClass": job.robot_class,
+                "robots": job.robots,
                 "finished": job.finished,
                 "error": job.error,
                 **job.local_reading(),

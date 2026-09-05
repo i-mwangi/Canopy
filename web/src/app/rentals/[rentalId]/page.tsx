@@ -1,23 +1,21 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 
 import NavBar from '@/components/ui/nav-bar';
-import Assignment from '@/components/ui/rental/assignment';
 import Floor from '@/components/ui/rental/floor';
 import Logs from '@/components/ui/rental/logs';
+import OrderLegs from '@/components/ui/rental/order-legs';
 import Settlement from '@/components/ui/rental/settlement';
 import { useAccount } from '@/components/account-provider';
-import { SurgePill } from '@/components/ui/status-pill';
 import { api } from '@/lib/api';
+import { cn, elapsedMinutes } from '@/lib/utils';
+import type { Rental, RentalEvent } from '@/lib/types';
 
-// The robot drives itself through its route; a renter has no business stepping it forward.
-// These stand in for the fleet when no simulator is attached, so they are opt-in.
+// The fleet drives itself through the route; a renter has no business stepping it forward.
+// These stand in for a simulator that is not attached yet, so they are opt-in.
 const SIMULATOR_CONTROLS = process.env.NEXT_PUBLIC_SIMULATOR_CONTROLS === 'true';
-import { cn, elapsedMinutes, shortAddress, usd } from '@/lib/utils';
-import type { Rental, RentalEvent, Robot } from '@/lib/types';
 
 export default function RentalDetail({ params }: { params: Promise<{ rentalId: string }> }) {
     const { rentalId } = use(params);
@@ -25,7 +23,6 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
 
     const [rental, setRental] = useState<Rental | null>(null);
     const [events, setEvents] = useState<RentalEvent[]>([]);
-    const [robot, setRobot] = useState<Robot | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [tick, setTick] = useState(Date.now());
@@ -37,7 +34,7 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
             setEvents(timeline);
             setError(null);
         } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'Could not load this rental');
+            setError(cause instanceof Error ? cause.message : 'Could not load this order');
         }
     }, [rentalId]);
 
@@ -48,75 +45,63 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
     }, [load]);
 
     useEffect(() => {
-        // Local clock so the elapsed readout moves between polls.
         const timer = setInterval(() => setTick(Date.now()), 1_000);
         return () => clearInterval(timer);
     }, []);
 
-    useEffect(() => {
-        if (!rental) return;
-        api.robots()
-            .then((fleet) => setRobot(fleet.find((entry) => entry.id === rental.robotId) ?? null))
-            .catch(() => setRobot(null));
-    }, [rental?.robotId]);
-
-    async function act(action: 'complete' | 'cancel') {
+    async function cancel() {
         if (!rental) return;
         setBusy(true);
         try {
-            if (action === 'complete') await api.complete(rental.id, rental.meter.movesCompleted);
-            if (action === 'cancel') await api.cancel(rental.id, 'cancelled by renter');
+            await api.cancel(rental.id, 'cancelled by renter');
             await load();
             await refresh();
         } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'That action failed');
+            setError(cause instanceof Error ? cause.message : 'Could not cancel this order');
         } finally {
             setBusy(false);
         }
     }
 
-    /** Reports one finished move, standing in for the robot agent during a walkthrough. */
-    async function completeMove() {
+    /** Stands in for the fleet while no simulator is attached. */
+    async function simulateMove() {
         if (!rental) return;
         setBusy(true);
         try {
-            await api.meter(rental.id, rental.meter.movesCompleted + 1);
+            await api.meter(rental.id, rental.movesCompleted + 1);
             await load();
+            await refresh();
         } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'Could not report a completed move');
+            setError(cause instanceof Error ? cause.message : 'Could not report a move');
         } finally {
             setBusy(false);
         }
     }
 
-    /** Which move of the current leg the robot is on: the approach, then the carry. */
-    const nextMove = rental
-        ? rental.leg.moves[rental.meter.movesCompleted % 2]
-        : undefined;
-
-    // The server bills the elapsed time it measures, so the page shows that same number
-    // rather than a second, unrelated clock.
     const runtimeMinutes = rental
-        ? rental.status === 'active'
-            ? elapsedMinutes(rental.startedAt, tick)
-            : rental.meter.meteredMinutes
+        ? elapsedMinutes(rental.startedAt, rental.status === 'active' ? tick : (rental.endedAt ?? tick))
         : 0;
 
+    /** What the order has cost so far, from the legs that have actually run. */
     const liveFare = useMemo(() => {
         if (!rental) return '0';
         if (rental.fare) return rental.fare;
-        if (!robot) return '0';
 
-        const minutes =
-            rental.status === 'active' ? elapsedMinutes(rental.startedAt, tick) : rental.meter.meteredMinutes;
+        const now = rental.status === 'active' ? tick : (rental.endedAt ?? tick);
+        const total = rental.legs.reduce((sum, leg) => {
+            if (leg.startedAt === undefined) return sum;
 
-        const base = Number(robot.rates.baseFare);
-        const time = Number(robot.rates.perMinute) * Math.ceil(minutes);
-        const tasks = Number(robot.rates.perTask) * rental.meter.tasksCompleted;
-        const surged = (base + time + tasks) * (rental.surgeBps / 10_000);
+            const minutes = Math.ceil(((leg.endedAt ?? now) - leg.startedAt) / 60_000);
+            const base = Number(leg.rates.baseFare);
+            const time = Number(leg.rates.perMinute) * minutes;
+            const tasks = leg.movesCompleted >= 2 ? Number(leg.rates.perTask) : 0;
+            const surged = (base + time + tasks) * (leg.surgeBps / 10_000);
 
-        return Math.min(surged, Number(rental.authorized)).toFixed(6);
-    }, [rental, robot, tick]);
+            return sum + Math.max(surged, Number(leg.rates.minimumFare));
+        }, 0);
+
+        return Math.min(total, Number(rental.authorized)).toFixed(6);
+    }, [rental, tick]);
 
     if (!rental) {
         return (
@@ -130,14 +115,15 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
     }
 
     const running = rental.status === 'active';
+    const activeLegIndex = Math.min(rental.legs.length - 1, Math.floor(rental.movesCompleted / 2));
 
     return (
         <>
             <NavBar />
             <main className='w-full flex items-center justify-center'>
                 <div className='w-[90%] mb-16 flex flex-col items-center justify-center gap-y-12'>
-                    <section className='w-full grid grid-cols-3 gap-x-6'>
-                        <div className='mb-10 col-span-3 flex items-center gap-x-6'>
+                    <section className='w-full flex flex-col gap-y-10'>
+                        <div className='flex items-center gap-x-6'>
                             <h1 className='text-4xl'>
                                 #<span className='underline'>{rental.id.slice(0, 8).toUpperCase()}</span>
                             </h1>
@@ -153,76 +139,40 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
                             >
                                 {rental.status}
                             </h5>
-                            <SurgePill bps={rental.surgeBps} />
+                            <span className='gray-background text-xs'>
+                                {rental.movesCompleted} of {rental.movesTotal} moves
+                            </span>
 
                             <div className='ml-auto flex items-center gap-x-3'>
                                 {running && (
                                     <>
                                         {SIMULATOR_CONTROLS && (
-                                            <>
-                                                <button
-                                                    className='white-button !py-2.5 !border-tetriary text-secondary'
-                                                    disabled={busy}
-                                                    onClick={() => void completeMove()}
-                                                    title={`Simulator: ${nextMove?.label ?? ''}`}
-                                                >
-                                                    Simulate move {nextMove?.step}
-                                                </button>
-                                                <button
-                                                    className='white-button !py-2.5 !border-tetriary text-secondary'
-                                                    disabled={busy}
-                                                    onClick={() => void act('complete')}
-                                                >
-                                                    Simulate finish
-                                                </button>
-                                            </>
+                                            <button
+                                                className='white-button !py-2.5 !border-tetriary text-secondary'
+                                                disabled={busy}
+                                                onClick={() => void simulateMove()}
+                                            >
+                                                Simulate move {rental.movesCompleted + 1}
+                                            </button>
                                         )}
                                         <button
                                             className='white-button !py-2.5'
                                             disabled={busy}
-                                            onClick={() => void act('cancel')}
+                                            onClick={() => void cancel()}
                                         >
-                                            Cancel job
+                                            Cancel order
                                         </button>
                                     </>
                                 )}
-                                {(rental.status === 'settled' || rental.status === 'cancelled') && (
+                                {!running && (
                                     <Link href='/browse' className='primary-button !py-2.5'>
-                                        Rent another
+                                        Place another order
                                     </Link>
                                 )}
                             </div>
                         </div>
 
-                        <figure className='relative h-fit self-end [&>*]:p-4 grid grid-cols-2 [&_h4]:text-secondary border border-secondary rounded-lg'>
-                            <section className='border-r border-secondary'>
-                                <h4 className='mb-4'>Robot</h4>
-                                <Image
-                                    src='/images/icons/crane.svg'
-                                    alt='robot'
-                                    height={32}
-                                    width={28}
-                                    className='h-auto'
-                                />
-                                <h5 className='mt-1 text-xs'>
-                                    #{rental.robotId} · {robot?.class ?? '—'}
-                                </h5>
-                            </section>
-                            <section className='[&>h5]:text-xs'>
-                                <h4 className='mb-4'>Rate card</h4>
-                                <h5>Base {usd(robot?.rates.baseFare)}</h5>
-                                <h5>Per minute {usd(robot?.rates.perMinute)}</h5>
-                                <h5>Per task {usd(robot?.rates.perTask)}</h5>
-                            </section>
-                            <section className='border-t border-secondary col-span-2'>
-                                <h4 className='mb-4'>Owner</h4>
-                                <h5 className='text-xs'>
-                                    {robot ? shortAddress(robot.owner) : '—'}
-                                </h5>
-                            </section>
-                        </figure>
-
-                        <Assignment rental={rental} events={events} className='col-span-2 self-end' />
+                        <OrderLegs rental={rental} activeLegIndex={activeLegIndex} />
                     </section>
 
                     <section className='w-full grid grid-cols-5 gap-x-9'>

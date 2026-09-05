@@ -65,22 +65,31 @@ def main() -> int:
 
     client = connectivity.app.test_client()
 
-    controller = Controller("Picking", "0", state_dir=STATE_DIR)
+    # An order needs a robot per leg, so the test drives three controllers.
+    controllers = [
+        Controller(robot_class, "0", state_dir=STATE_DIR)
+        for robot_class in ("Picking", "Packing", "Delivery")
+    ]
     stop = threading.Event()
 
     def drive():
         while not stop.is_set():
-            controller.poll()
+            for controller in controllers:
+                controller.poll()
             time.sleep(0.05)
 
     threading.Thread(target=drive, daemon=True).start()
 
     # Keep the simulated motion short so the test finishes quickly.
-    controller.execute = lambda command: time.sleep(0.2)
+    for controller in controllers:
+        controller.execute = lambda command: time.sleep(0.2)
 
     response = client.post(
         "/dispatch",
-        json={"rentalId": "rental-1", "robotId": "0", "robotClass": "Picking", "tasks": 3},
+        json={
+            "rentalId": "rental-1",
+            "robots": {"Picking": "0", "Packing": "0", "Delivery": "0"},
+        },
     )
     assert response.status_code == 202, f"dispatch returned {response.status_code}"
 
@@ -104,7 +113,7 @@ def main() -> int:
     moves = [reading["movesCompleted"] for reading in meters]
 
     assert moves == sorted(moves), f"move count went backwards: {moves}"
-    assert completes[0]["movesCompleted"] == 6, f"three tasks is six moves, saw {completes[0]}"
+    assert completes[0]["movesCompleted"] == 6, f"an order is six moves, saw {completes[0]}"
     assert 1 in moves, "the approach must be reported before the carry completes the leg"
     assert all("meteredMinutes" not in reading for reading in meters), (
         "the agent must not report runtime; the marketplace measures it"

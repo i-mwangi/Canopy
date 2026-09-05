@@ -5,13 +5,11 @@ import type { CircleWalletGateway } from '../circle/client.ts';
 import type { Ledger } from '../ledger/ledger.ts';
 import { LedgerConflict } from '../ledger/types.ts';
 import {
-  authorizationAmount,
+  orderAuthorization,
   quoteFare,
-  splitFare,
+  settleOrder,
   surgeBps,
-  tasksFromMoves,
   MOVES_PER_TASK,
-  type MeterReading,
   type RateCard,
 } from '../pricing/fare.ts';
 import type { RentalChain, RobotClass } from '../chain/rental-chain.ts';
@@ -20,25 +18,47 @@ import { describeLeg, legFor } from './legs.ts';
 
 export type RentalStatus = 'active' | 'completed' | 'settled' | 'cancelled';
 
+/** The three legs of an order, in the order they are run. */
+export const ORDER_CLASSES: RobotClass[] = [0, 1, 2];
+
+export const MOVES_PER_ORDER = ORDER_CLASSES.length * MOVES_PER_TASK;
+
+/**
+ * One leg of an order: a robot, its owner, and what it is owed.
+ *
+ * Each leg is priced on its own robot's rate card and paid to its own owner, because the
+ * three robots in an order can belong to three different people.
+ */
+export type RentalLeg = {
+  class_: RobotClass;
+  robotId: bigint;
+  onChainId?: bigint;
+  ownerAccountId: string;
+  ownerAddress: `0x${string}`;
+  rates: RateCard;
+  surgeBps: number;
+  /** Set when the previous leg hands over, so each robot is billed only for its own stretch. */
+  startedAt?: number;
+  endedAt?: number;
+  movesCompleted: number;
+  fare?: bigint;
+  platformFee?: bigint;
+  ownerPayout?: bigint;
+};
+
 export type Rental = {
   id: string;
-  onChainId?: bigint;
-  robotId: bigint;
-  /** Fixes which leg of the route this rental runs, since class decides the task. */
-  class_: RobotClass;
   renterAccountId: string;
-  ownerAccountId: string;
   status: RentalStatus;
   holdId: string;
   authorizedAmount: bigint;
-  surgeBps: number;
-  rates: RateCard;
-  reading: MeterReading;
+  legs: RentalLeg[];
+  /** Moves finished across the whole order, from 0 to six. */
+  movesCompleted: number;
   startedAt: number;
   endedAt?: number;
   fare?: bigint;
   platformFee?: bigint;
-  ownerPayout?: bigint;
   settlementRef?: string;
 };
 
@@ -101,99 +121,126 @@ export class RentalService {
   ) {}
 
   /**
-   * Prices a prospective rental without reserving anything.
+   * Prices an order without reserving anything.
    *
-   * Only the task count is asked for. Runtime is measured while the robot works, so quoting a
-   * time here would be inventing a number the renter cannot know and would not be billed on.
+   * An order is one item moved the whole way through the warehouse, so it needs one robot of
+   * each class. Runtime is measured while they work, so nothing here estimates a duration:
+   * the figure shown is the floor, and the hold covers the ceiling.
    */
-  async quote(params: { robotId: bigint; estimatedTasks: number }) {
-    const robot = await this.chain.getRobot(params.robotId);
-    const fleet = await this.chain.getFleetAvailability(robot.class_);
-    const surge = surgeBps(fleet);
-    const { maxBillableMinutes } = this.config.marketplace;
+  async quote() {
+    const { maxBillableMinutes, platformFeeBps, authorizationBufferBps } = this.config.marketplace;
+    const candidates = await this.candidateRobots();
 
-    // The fare shown before dispatch is the floor: tasks and base only, no runtime yet.
-    const fare = quoteFare({
-      rates: robot.rates,
-      reading: { meteredMinutes: 0, tasksCompleted: params.estimatedTasks },
-      surgeBps: surge,
-      platformFeeBps: this.config.marketplace.platformFeeBps,
-    });
+    const legs = candidates.map((robot) => ({ rates: robot.rates, surgeBps: robot.surgeBps }));
 
-    const authorization = authorizationAmount({
-      rates: robot.rates,
-      estimatedTasks: params.estimatedTasks,
+    const floor = candidates.reduce(
+      (sum, robot) =>
+        sum +
+        quoteFare({
+          rates: robot.rates,
+          reading: { meteredMinutes: 0, tasksCompleted: 1 },
+          surgeBps: robot.surgeBps,
+          platformFeeBps: 0,
+        }).total,
+      0n,
+    );
+
+    const authorization = orderAuthorization({
+      legs,
       maxBillableMinutes,
-      surgeBps: surge,
-      bufferBps: this.config.marketplace.authorizationBufferBps,
+      bufferBps: authorizationBufferBps,
     });
 
     return {
-      robotId: params.robotId,
-      rates: robot.rates,
-      surgeBps: surge,
-      fare,
+      legs: candidates.map((robot) => ({
+        class_: robot.class_,
+        robotId: robot.robotId,
+        rates: robot.rates,
+        surgeBps: robot.surgeBps,
+      })),
+      fareFloor: floor,
       authorization,
       maxBillableMinutes,
+      platformFeeBps,
     };
   }
 
   /**
-   * Opens a rental: reserves the estimated fare against the renter's balance, then records
-   * the rental on chain. The hold is ledger-only, so no funds move until the meter stops.
+   * Opens an order: reserves one robot per class and holds the worst-case fare.
+   *
+   * The hold is a ledger entry, so no funds move until the last robot finishes.
    */
-  async startRental(params: {
-    robotId: bigint;
-    renterAccountId: string;
-    estimatedTasks: number;
-  }): Promise<Rental> {
+  async startRental(params: { renterAccountId: string }): Promise<Rental> {
     const renter = await this.ledger.requireAccount(params.renterAccountId);
     if (renter.role !== 'renter') throw new LedgerConflict(`Account ${renter.id} is not a renter account`);
 
-    const quote = await this.quote({ robotId: params.robotId, estimatedTasks: params.estimatedTasks });
-    const robot = await this.chain.getRobot(params.robotId);
-    const ownerAccount = await this.resolveOwnerAccount(robot.owner);
+    const candidates = await this.candidateRobots();
+    const authorization = orderAuthorization({
+      legs: candidates.map((robot) => ({ rates: robot.rates, surgeBps: robot.surgeBps })),
+      maxBillableMinutes: this.config.marketplace.maxBillableMinutes,
+      bufferBps: this.config.marketplace.authorizationBufferBps,
+    });
 
     const rentalId = randomUUID();
     const hold = await this.ledger.placeHold({
       accountId: renter.id,
       rentalId,
-      amount: quote.authorization,
+      amount: authorization,
       groupId: `hold:${rentalId}`,
     });
 
-    let onChainId: bigint;
+    const legs: RentalLeg[] = [];
     try {
-      onChainId = await this.chain.startRental({
-        robotId: params.robotId,
-        renter: renter.address,
-        authorizedAmount: quote.authorization,
-        surgeBps: quote.surgeBps,
-        holdRef: hold.id,
-      });
+      for (const robot of candidates) {
+        const ownerAccount = await this.resolveOwnerAccount(robot.owner);
+
+        const onChainId = await this.chain.startRental({
+          robotId: robot.robotId,
+          renter: renter.address,
+          authorizedAmount: authorization,
+          surgeBps: robot.surgeBps,
+          holdRef: `${hold.id}:${robot.class_}`,
+        });
+
+        legs.push({
+          class_: robot.class_,
+          robotId: robot.robotId,
+          onChainId,
+          ownerAccountId: ownerAccount.id,
+          ownerAddress: ownerAccount.address,
+          rates: robot.rates,
+          surgeBps: robot.surgeBps,
+          movesCompleted: 0,
+        });
+      }
     } catch (error) {
+      // Reserving is all or nothing: an order that only has two of its three robots cannot
+      // be fulfilled, so release what was taken rather than stranding a robot or a balance.
+      for (const leg of legs) {
+        if (leg.onChainId !== undefined) {
+          await this.chain.cancelRental(leg.onChainId, 'order could not reserve every robot').catch(() => {});
+        }
+      }
       await this.ledger.releaseHold({
         holdId: hold.id,
         groupId: `hold-release:${rentalId}`,
-        reason: 'rental could not be opened on chain',
+        reason: 'order could not reserve a robot for every leg',
       });
       throw error;
     }
 
+    const startedAt = Date.now();
+    legs[0]!.startedAt = startedAt;
+
     const rental: Rental = {
       id: rentalId,
-      onChainId,
-      robotId: params.robotId,
-      class_: robot.class_,
       renterAccountId: renter.id,
-      ownerAccountId: ownerAccount.id,
       status: 'active',
       holdId: hold.id,
-      authorizedAmount: quote.authorization,
-      surgeBps: quote.surgeBps,
-      rates: robot.rates,
-      reading: { meteredMinutes: 0, movesCompleted: 0, tasksCompleted: 0 },
-      startedAt: Date.now(),
+      authorizedAmount: authorization,
+      legs,
+      movesCompleted: 0,
+      startedAt,
     };
 
     await this.rentals.put(rental);
@@ -202,144 +249,130 @@ export class RentalService {
       rentalId,
       kind: 'rental_started',
       label: 'Authorization held',
-      detail: 'Covers the tasks requested plus the longest run that can be billed',
-      amount: quote.authorization,
+      detail: 'Covers all three legs running their full allowance',
+      amount: authorization,
       phase: 'authorize',
     });
-    this.events.append({
-      rentalId,
-      kind: 'robot_assigned',
-      label: `Robot #${params.robotId} assigned`,
-      detail: `Rental #${onChainId} opened at ${(quote.surgeBps / 10_000).toFixed(2)}x`,
-      phase: 'authorize',
-    });
+
+    for (const leg of legs) {
+      this.events.append({
+        rentalId,
+        kind: 'robot_assigned',
+        label: `${legFor(leg.class_).name}: Robot #${leg.robotId}`,
+        detail: `${describeLeg(legFor(leg.class_))} at ${(leg.surgeBps / 10_000).toFixed(2)}x`,
+        phase: 'authorize',
+      });
+    }
 
     return rental;
   }
 
   /**
-   * Records progress from the robot.
-   *
-   * The robot reports what it finished; how long it has been running is the marketplace's own
-   * clock. Taking runtime from the caller would let a fare drift away from the time actually
-   * spent, which is the one number both sides can check.
+   * Records progress. The robot reports finished moves; the clock is the marketplace's own,
+   * so a fare cannot drift away from the time actually spent.
    */
   async recordMeter(rentalId: string, progress: { movesCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
-    const movesCompleted = Math.max(rental.reading.movesCompleted, progress.movesCompleted);
-    const next: MeterReading = {
-      meteredMinutes: this.runtimeMinutes(rental),
-      movesCompleted,
-      tasksCompleted: tasksFromMoves(movesCompleted),
-    };
-
-    if (rental.onChainId !== undefined) {
-      await this.chain.recordMeter(rental.onChainId, next);
-    }
-
-    const updated: Rental = { ...rental, reading: next };
+    const target = Math.min(MOVES_PER_ORDER, Math.max(rental.movesCompleted, progress.movesCompleted));
+    const updated = this.advanceTo(rental, target);
     await this.rentals.put(updated);
 
-    // Name the move that just finished rather than the running total, so the log reads as the
-    // route the robot took.
-    const leg = legFor(rental.class_);
-    for (let move = rental.reading.movesCompleted; move < movesCompleted; move += 1) {
-      const step = leg.moves[move % MOVES_PER_TASK]!;
-      this.events.append({
-        rentalId,
-        kind: 'meter_recorded',
-        label: `${leg.name} ${tasksFromMoves(move) + 1} · move ${step.step}`,
-        detail: step.label,
-        phase: 'work',
-      });
-    }
-
+    // The whole order is done once the last robot sets the parcel down.
+    if (updated.movesCompleted >= MOVES_PER_ORDER) return this.completeRental(rentalId);
     return updated;
   }
 
   /**
-   * Stops the meter and fixes the billable runtime at the elapsed time. Nothing is charged
-   * until `settleRental` runs.
+   * Stops every meter and bills the order. Finishing the work is what triggers the charge:
+   * leaving a completed order waiting for an instruction would strand the held balance.
    */
   async completeRental(rentalId: string, progress?: { movesCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
-    if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
+    if (rental.status === 'settled' || rental.status === 'cancelled') return rental;
 
-    const movesCompleted = Math.max(rental.reading.movesCompleted, progress?.movesCompleted ?? 0);
-    const reading: MeterReading = {
-      meteredMinutes: this.runtimeMinutes(rental),
-      movesCompleted,
-      tasksCompleted: tasksFromMoves(movesCompleted),
-    };
+    const target = Math.min(
+      MOVES_PER_ORDER,
+      Math.max(rental.movesCompleted, progress?.movesCompleted ?? rental.movesCompleted),
+    );
 
-    if (rental.onChainId !== undefined) {
-      await this.chain.completeRental(rental.onChainId, reading);
-    }
+    const advanced = this.advanceTo(rental, target);
+    const endedAt = Date.now();
 
-    const updated: Rental = { ...rental, status: 'completed', reading, endedAt: Date.now() };
-    await this.rentals.put(updated);
+    const legs = advanced.legs.map((leg) => ({
+      ...leg,
+      // A leg that was still running when the order stopped is billed up to now; one that
+      // never started is billed for nothing.
+      endedAt: leg.endedAt ?? (leg.startedAt === undefined ? undefined : endedAt),
+    }));
+
+    const completed: Rental = { ...advanced, legs, status: 'completed', endedAt };
+    await this.rentals.put(completed);
 
     this.events.append({
       rentalId,
       kind: 'rental_completed',
-      label: 'Meter stopped',
-      detail: `${reading.tasksCompleted} × ${legFor(rental.class_).name} in ${reading.movesCompleted} moves, ${Math.ceil(reading.meteredMinutes)} min`,
+      label: 'Order complete',
+      detail: `${completed.movesCompleted} of ${MOVES_PER_ORDER} moves finished`,
       phase: 'work',
     });
 
-    // Finishing the work is what triggers the charge. Leaving a completed rental waiting for
-    // a separate instruction would mean a held balance with nobody left to release it.
     return this.settleRental(rentalId);
   }
 
   /**
-   * Captures the fare, splits it, moves the USDC, and writes the result back on chain.
+   * Captures the fare, pays each robot owner their leg, and takes the platform fee.
    *
-   * The ledger is authoritative and is written first. The on-chain transfers that follow
-   * carry the settlement group id, so a transfer that has to be retried reconciles against
-   * exactly one set of ledger entries.
+   * The ledger is written first and the transfers carry the settlement group id, so a
+   * transfer that has to be retried reconciles against exactly one set of entries.
    */
   async settleRental(rentalId: string): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status === 'settled') return rental;
     if (rental.status !== 'completed') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
-    const fare = quoteFare({
-      rates: rental.rates,
-      reading: rental.reading,
-      surgeBps: rental.surgeBps,
+    const priced = settleOrder({
+      legs: rental.legs.map((leg) => ({
+        rates: leg.rates,
+        surgeBps: leg.surgeBps,
+        meteredMinutes: this.legMinutes(leg),
+        tasksCompleted: leg.movesCompleted >= MOVES_PER_TASK ? 1 : 0,
+      })),
       platformFeeBps: this.config.marketplace.platformFeeBps,
+      authorizedAmount: rental.authorizedAmount,
     });
 
-    const billed = fare.total > rental.authorizedAmount ? rental.authorizedAmount : fare.total;
-    const { platformFee } = splitFare(billed, this.config.marketplace.platformFeeBps);
     const settlementGroup = `settle:${rentalId}`;
+    const settledLegs = rental.legs.map((leg, index) => ({
+      ...leg,
+      fare: priced.legs[index]!.fare,
+      platformFee: priced.legs[index]!.platformFee,
+      ownerPayout: priced.legs[index]!.ownerPayout,
+    }));
 
-    const { ownerPayout } = await this.ledger.captureAndSplit({
+    await this.ledger.captureAndDistribute({
       holdId: rental.holdId,
-      fare: billed,
-      platformFee,
-      ownerAccountId: rental.ownerAccountId,
+      fare: priced.total,
+      platformFee: priced.platformFee,
+      payouts: settledLegs.map((leg) => ({
+        accountId: leg.ownerAccountId,
+        amount: leg.ownerPayout!,
+      })),
       revenueAccountId: this.platform.revenueAccountId,
       groupId: settlementGroup,
     });
-
-    const renter = await this.ledger.requireAccount(rental.renterAccountId);
-    const owner = await this.ledger.requireAccount(rental.ownerAccountId);
-    const revenue = await this.ledger.requireAccount(this.platform.revenueAccountId);
 
     this.events.append({
       rentalId,
       kind: 'fare_captured',
       label: 'Fare captured',
-      detail: `${rental.reading.tasksCompleted} × ${legFor(rental.class_).name} over ${Math.ceil(rental.reading.meteredMinutes)} min`,
-      amount: billed,
+      detail: `${rental.legs.length} legs over ${Math.ceil(this.orderMinutes(rental))} min`,
+      amount: priced.total,
       phase: 'settle',
     });
 
-    const released = rental.authorizedAmount - billed;
+    const released = rental.authorizedAmount - priced.total;
     if (released > 0n) {
       this.events.append({
         rentalId,
@@ -351,24 +384,27 @@ export class RentalService {
       });
     }
 
-    if (ownerPayout > 0n) {
+    const renter = await this.ledger.requireAccount(rental.renterAccountId);
+    const revenue = await this.ledger.requireAccount(this.platform.revenueAccountId);
+
+    for (const leg of settledLegs) {
+      if (!leg.ownerPayout || leg.ownerPayout <= 0n) continue;
+
+      const owner = await this.ledger.requireAccount(leg.ownerAccountId);
       const receipt = await this.wallets.transferUsdc({
         walletId: renter.walletId,
         destinationAddress: owner.address,
-        amount: ownerPayout,
-        idempotencyKey: `${settlementGroup}:payout`,
+        amount: leg.ownerPayout,
+        idempotencyKey: `${settlementGroup}:payout:${leg.class_}`,
         refId: rentalId,
       });
 
       this.events.append({
         rentalId,
         kind: 'payout_transferred',
-        label: 'Owner paid',
-        detail:
-          owner.payoutMode === 'direct'
-            ? `USDC transferred to ${owner.address}, an address the owner controls`
-            : `USDC transferred to ${owner.address}`,
-        amount: ownerPayout,
+        label: `${legFor(leg.class_).name} owner paid`,
+        detail: `Robot #${leg.robotId} · ${owner.address}`,
+        amount: leg.ownerPayout,
         transactionId: receipt.transactionId,
         txHash: receipt.txHash,
         phase: 'settle',
@@ -376,24 +412,23 @@ export class RentalService {
       this.resolveTxHash(receipt.transactionId);
 
       // A direct owner has already been paid to their own address. Crediting the ledger and
-      // stopping there would show a spendable platform balance that no wallet backs, and a
-      // later withdrawal would pay them a second time out of the float.
+      // stopping there would show a spendable platform balance that no wallet backs.
       if (owner.payoutMode === 'direct') {
         await this.ledger.recordWithdrawal({
           accountId: owner.id,
-          amount: ownerPayout,
-          groupId: `${settlementGroup}:direct-payout`,
+          amount: leg.ownerPayout,
+          groupId: `${settlementGroup}:direct-payout:${leg.class_}`,
           transactionId: receipt.transactionId,
           destination: owner.address,
         });
       }
     }
 
-    if (platformFee > 0n) {
+    if (priced.platformFee > 0n) {
       const receipt = await this.wallets.transferUsdc({
         walletId: renter.walletId,
         destinationAddress: revenue.address,
-        amount: platformFee,
+        amount: priced.platformFee,
         idempotencyKey: `${settlementGroup}:fee`,
         refId: rentalId,
       });
@@ -402,8 +437,8 @@ export class RentalService {
         rentalId,
         kind: 'fee_transferred',
         label: 'Platform fee taken',
-        detail: `USDC transferred to the revenue wallet`,
-        amount: platformFee,
+        detail: 'USDC transferred to the revenue wallet',
+        amount: priced.platformFee,
         transactionId: receipt.transactionId,
         txHash: receipt.txHash,
         phase: 'settle',
@@ -411,45 +446,44 @@ export class RentalService {
       this.resolveTxHash(receipt.transactionId);
     }
 
-    if (rental.onChainId !== undefined) {
-      await this.chain.settleRental(rental.onChainId, billed, settlementGroup);
+    for (const leg of settledLegs) {
+      if (leg.onChainId !== undefined) {
+        await this.chain.settleRental(leg.onChainId, leg.fare ?? 0n, settlementGroup);
+      }
     }
-
-    this.events.append({
-      rentalId,
-      kind: 'rental_settled',
-      label: 'Settlement recorded on chain',
-      detail: `Rental #${rental.onChainId} closed`,
-      phase: 'settle',
-    });
 
     const settled: Rental = {
       ...rental,
+      legs: settledLegs,
       status: 'settled',
-      fare: billed,
-      platformFee,
-      ownerPayout,
+      fare: priced.total,
+      platformFee: priced.platformFee,
       settlementRef: settlementGroup,
     };
 
     await this.rentals.put(settled);
+
+    this.events.append({
+      rentalId,
+      kind: 'rental_settled',
+      label: 'Settlement recorded',
+      detail: `${settledLegs.length} owners paid`,
+      phase: 'settle',
+    });
+
     return settled;
   }
 
-  /** Voids a rental that produced no billable work and returns the authorization. */
+  /** Voids an order that produced no billable work and returns the authorization. */
   async cancelRental(rentalId: string, reason: string): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status === 'settled') throw new LedgerConflict(`Rental ${rentalId} is already settled`);
     if (rental.status === 'cancelled') return rental;
 
-    await this.ledger.releaseHold({
-      holdId: rental.holdId,
-      groupId: `cancel:${rentalId}`,
-      reason,
-    });
+    await this.ledger.releaseHold({ holdId: rental.holdId, groupId: `cancel:${rentalId}`, reason });
 
-    if (rental.onChainId !== undefined) {
-      await this.chain.cancelRental(rental.onChainId, reason);
+    for (const leg of rental.legs) {
+      if (leg.onChainId !== undefined) await this.chain.cancelRental(leg.onChainId, reason);
     }
 
     const cancelled: Rental = { ...rental, status: 'cancelled', endedAt: Date.now() };
@@ -458,7 +492,7 @@ export class RentalService {
     this.events.append({
       rentalId,
       kind: 'rental_cancelled',
-      label: 'Rental cancelled',
+      label: 'Order cancelled',
       detail: reason,
       amount: rental.authorizedAmount,
       phase: 'settle',
@@ -480,10 +514,85 @@ export class RentalService {
   }
 
   /**
+   * Advances the order to a move count, logging each move and handing over between legs.
+   *
+   * A leg's clock starts when the previous one sets the item down, so each owner is billed
+   * for their own stretch rather than the whole order's duration.
+   */
+  private advanceTo(rental: Rental, target: number): Rental {
+    if (target <= rental.movesCompleted) return rental;
+
+    const legs = rental.legs.map((leg) => ({ ...leg }));
+    const now = Date.now();
+
+    for (let move = rental.movesCompleted; move < target; move += 1) {
+      const legIndex = Math.floor(move / MOVES_PER_TASK);
+      const leg = legs[legIndex];
+      if (!leg) break;
+
+      leg.startedAt ??= now;
+      leg.movesCompleted = (move % MOVES_PER_TASK) + 1;
+
+      const step = legFor(leg.class_).moves[move % MOVES_PER_TASK]!;
+      this.events.append({
+        rentalId: rental.id,
+        kind: 'meter_recorded',
+        label: `${legFor(leg.class_).name} · move ${step.step}`,
+        detail: step.label,
+        phase: 'work',
+      });
+
+      // The leg is finished, so its clock stops and the next robot's begins.
+      if (leg.movesCompleted >= MOVES_PER_TASK) {
+        leg.endedAt = now;
+        const next = legs[legIndex + 1];
+        if (next) next.startedAt ??= now;
+      }
+    }
+
+    return { ...rental, legs, movesCompleted: target };
+  }
+
+  /** One robot of each class, cheapest available first, with its surge at this moment. */
+  private async candidateRobots() {
+    const robots = await this.chain.listRobots();
+    const chosen = [];
+
+    for (const class_ of ORDER_CLASSES) {
+      const available = robots.filter((robot) => robot.class_ === class_ && robot.status === 1);
+      const pick = available[0];
+      if (!pick) throw new LedgerConflict(`No ${legFor(class_).name} robot is available`);
+
+      const fleet = await this.chain.getFleetAvailability(class_);
+      chosen.push({
+        class_,
+        robotId: pick.id,
+        owner: pick.owner,
+        rates: pick.rates,
+        surgeBps: surgeBps(fleet),
+      });
+    }
+
+    return chosen;
+  }
+
+  /** Billable runtime for one leg, capped at the ceiling the authorization was sized against. */
+  private legMinutes(leg: RentalLeg, now = Date.now()): number {
+    if (leg.startedAt === undefined) return 0;
+
+    const elapsed = Math.max(0, ((leg.endedAt ?? now) - leg.startedAt) / 60_000);
+    return Math.min(elapsed, this.config.marketplace.maxBillableMinutes);
+  }
+
+  private orderMinutes(rental: Rental, now = Date.now()): number {
+    return Math.max(0, ((rental.endedAt ?? now) - rental.startedAt) / 60_000);
+  }
+
+  /**
    * Waits for a transfer to land and fills its hash into the event log.
    *
-   * Deliberately not awaited: settlement should not block on a confirmation, and a rental
-   * whose hash never resolves is still correctly settled — the link simply stays absent.
+   * Deliberately not awaited: settlement should not block on a confirmation, and an order
+   * whose hash never resolves is still correctly settled.
    */
   private resolveTxHash(transactionId: string): void {
     try {
@@ -498,15 +607,6 @@ export class RentalService {
     } catch {
       // Settlement has already happened. Nothing about a missing link is worth throwing over.
     }
-  }
-
-  /**
-   * Billable runtime so far, capped at the ceiling the authorization was sized against. A
-   * rental left open overnight bills the cap, not the whole night.
-   */
-  private runtimeMinutes(rental: Rental, now = Date.now()): number {
-    const elapsed = Math.max(0, (now - rental.startedAt) / 60_000);
-    return Math.min(elapsed, this.config.marketplace.maxBillableMinutes);
   }
 
   private async requireRental(rentalId: string): Promise<Rental> {

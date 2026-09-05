@@ -147,9 +147,107 @@ export class Ledger {
   }
 
   /**
-   * Captures the final fare from an open hold and splits it between the robot owner and
-   * the platform revenue account. Any unused authorization returns to the renter.
+   * Captures the final fare from an open hold and distributes it: one share per robot owner
+   * that did work, and the platform fee. Any unused authorization returns to the renter.
+   *
+   * The shares must add up to the fare exactly. An order is priced leg by leg, so allowing a
+   * rounding gap here would let a fraction of a cent appear or vanish on every settlement.
    */
+  async captureAndDistribute(params: {
+    holdId: string;
+    fare: bigint;
+    platformFee: bigint;
+    payouts: { accountId: string; amount: bigint }[];
+    revenueAccountId: string;
+    groupId: string;
+  }): Promise<{ hold: Hold; released: bigint }> {
+    if (params.fare < 0n) throw new LedgerConflict('Fare cannot be negative');
+    if (params.platformFee < 0n) throw new LedgerConflict('Platform fee cannot be negative');
+
+    const distributed = params.payouts.reduce((total, payout) => total + payout.amount, 0n);
+    if (distributed + params.platformFee !== params.fare) {
+      throw new LedgerConflict(
+        `Distribution of ${distributed} plus fee ${params.platformFee} does not equal the fare ${params.fare}`,
+      );
+    }
+
+    const hold = await this.store.getHold(params.holdId);
+    if (!hold) throw new LedgerConflict(`Unknown hold ${params.holdId}`);
+
+    const keys = [
+      hold.accountId,
+      params.revenueAccountId,
+      params.groupId,
+      ...params.payouts.map((payout) => payout.accountId),
+    ];
+
+    return this.store.transaction(keys, async () => {
+      const current = await this.store.getHold(params.holdId);
+      if (!current) throw new LedgerConflict(`Unknown hold ${params.holdId}`);
+      if (current.status !== 'open') throw new LedgerConflict(`Hold ${params.holdId} is ${current.status}`);
+      if (params.fare > current.amount) {
+        throw new LedgerConflict(`Fare ${params.fare} exceeds authorization ${current.amount}`);
+      }
+
+      const released = current.amount - params.fare;
+
+      const postings: PostingDraft[] = [
+        {
+          kind: 'capture',
+          accountId: current.accountId,
+          amount: -params.fare,
+          heldDelta: -current.amount,
+          rentalId: current.rentalId,
+          memo: `captured fare for rental ${current.rentalId}`,
+        },
+      ];
+
+      if (released > 0n) {
+        postings.push({
+          kind: 'hold_release',
+          accountId: current.accountId,
+          amount: 0n,
+          rentalId: current.rentalId,
+          memo: `released unused authorization for rental ${current.rentalId}`,
+        });
+      }
+
+      for (const payout of params.payouts) {
+        if (payout.amount <= 0n) continue;
+        postings.push({
+          kind: 'payout',
+          accountId: payout.accountId,
+          amount: payout.amount,
+          rentalId: current.rentalId,
+          memo: `owner earnings for rental ${current.rentalId}`,
+        });
+      }
+
+      if (params.platformFee > 0n) {
+        postings.push({
+          kind: 'platform_fee',
+          accountId: params.revenueAccountId,
+          amount: params.platformFee,
+          rentalId: current.rentalId,
+          memo: `platform fee for rental ${current.rentalId}`,
+        });
+      }
+
+      await this.post(params.groupId, postings);
+
+      const settled: Hold = {
+        ...current,
+        status: 'captured',
+        capturedAmount: params.fare,
+        resolvedAt: Date.now(),
+      };
+      await this.store.putHold(settled);
+
+      return { hold: settled, released };
+    });
+  }
+
+  /** Single-owner capture, kept as the common case on top of the distribution above. */
   async captureAndSplit(params: {
     holdId: string;
     fare: bigint;
@@ -158,81 +256,21 @@ export class Ledger {
     revenueAccountId: string;
     groupId: string;
   }): Promise<{ hold: Hold; ownerPayout: bigint; released: bigint }> {
-    if (params.fare < 0n) throw new LedgerConflict('Fare cannot be negative');
-    if (params.platformFee < 0n || params.platformFee > params.fare) {
+    if (params.platformFee > params.fare) {
       throw new LedgerConflict('Platform fee must fall between zero and the fare');
     }
 
-    const hold = await this.store.getHold(params.holdId);
-    if (!hold) throw new LedgerConflict(`Unknown hold ${params.holdId}`);
+    const ownerPayout = params.fare - params.platformFee;
+    const result = await this.captureAndDistribute({
+      holdId: params.holdId,
+      fare: params.fare,
+      platformFee: params.platformFee,
+      payouts: [{ accountId: params.ownerAccountId, amount: ownerPayout }],
+      revenueAccountId: params.revenueAccountId,
+      groupId: params.groupId,
+    });
 
-    return this.store.transaction(
-      [hold.accountId, params.ownerAccountId, params.revenueAccountId, params.groupId],
-      async () => {
-        const current = await this.store.getHold(params.holdId);
-        if (!current) throw new LedgerConflict(`Unknown hold ${params.holdId}`);
-        if (current.status !== 'open') throw new LedgerConflict(`Hold ${params.holdId} is ${current.status}`);
-        if (params.fare > current.amount) {
-          throw new LedgerConflict(`Fare ${params.fare} exceeds authorization ${current.amount}`);
-        }
-
-        const ownerPayout = params.fare - params.platformFee;
-        const released = current.amount - params.fare;
-
-        const postings: PostingDraft[] = [
-          {
-            kind: 'capture',
-            accountId: current.accountId,
-            amount: -params.fare,
-            heldDelta: -current.amount,
-            rentalId: current.rentalId,
-            memo: `captured fare for rental ${current.rentalId}`,
-          },
-        ];
-
-        if (released > 0n) {
-          postings.push({
-            kind: 'hold_release',
-            accountId: current.accountId,
-            amount: 0n,
-            rentalId: current.rentalId,
-            memo: `released unused authorization for rental ${current.rentalId}`,
-          });
-        }
-
-        if (ownerPayout > 0n) {
-          postings.push({
-            kind: 'payout',
-            accountId: params.ownerAccountId,
-            amount: ownerPayout,
-            rentalId: current.rentalId,
-            memo: `owner earnings for rental ${current.rentalId}`,
-          });
-        }
-
-        if (params.platformFee > 0n) {
-          postings.push({
-            kind: 'platform_fee',
-            accountId: params.revenueAccountId,
-            amount: params.platformFee,
-            rentalId: current.rentalId,
-            memo: `platform fee for rental ${current.rentalId}`,
-          });
-        }
-
-        await this.post(params.groupId, postings);
-
-        const settled: Hold = {
-          ...current,
-          status: 'captured',
-          capturedAmount: params.fare,
-          resolvedAt: Date.now(),
-        };
-        await this.store.putHold(settled);
-
-        return { hold: settled, ownerPayout, released };
-      },
-    );
+    return { ...result, ownerPayout };
   }
 
   /** Voids a hold without capturing anything. */

@@ -13,25 +13,28 @@ interface Props {
     className?: string;
 }
 
+/**
+ * Where the fare went.
+ *
+ * Three robots did the work and three owners are paid, so the split is one row per leg plus
+ * the platform's share, rather than a single payout.
+ */
 export default function Settlement({ rental, events, className }: Props) {
-    const legs = [
-        {
-            title: 'Fare captured',
-            party: 'From the renter balance',
-            amount: rental.fare,
-            event: events.find((entry) => entry.kind === 'fare_captured'),
-        },
-        {
-            title: 'Robot owner paid',
-            party: 'To the owner wallet',
-            amount: rental.ownerPayout,
-            event: events.find((entry) => entry.kind === 'payout_transferred'),
-        },
+    const payouts = events.filter((event) => event.kind === 'payout_transferred');
+    const fee = events.find((event) => event.kind === 'fee_transferred');
+
+    const rows = [
+        ...rental.legs.map((leg, index) => ({
+            title: `${leg.leg.name} owner`,
+            subtitle: `Robot #${leg.robotId}`,
+            amount: leg.ownerPayout,
+            event: payouts[index],
+        })),
         {
             title: 'Platform fee',
-            party: 'To the revenue wallet',
+            subtitle: 'To the revenue wallet',
             amount: rental.platformFee,
-            event: events.find((entry) => entry.kind === 'fee_transferred'),
+            event: fee,
         },
     ];
 
@@ -41,75 +44,63 @@ export default function Settlement({ rental, events, className }: Props) {
                 <h4>Settlement</h4>
                 <figure className='note'>
                     <Image src='/images/icons/power.svg' alt='power' height={8} width={8} />
-                    <h6>Programmatic wallets, no keys handed to users</h6>
+                    <h6>Each owner paid for their own leg</h6>
                 </figure>
+                {rental.fare && (
+                    <figure className='note'>
+                        <h6>
+                            Fare {usd(rental.fare)} USDC · authorised {usd(rental.authorized)}
+                        </h6>
+                    </figure>
+                )}
             </section>
 
-            <section className='grid grid-cols-3 gap-x-3'>
-                {legs.map((leg) => {
-                    const done = leg.amount !== undefined;
+            <section className='grid grid-cols-4 gap-x-3'>
+                {rows.map((row) => {
+                    const done = row.amount !== undefined;
 
                     return (
                         <figure
-                            key={leg.title}
-                            className='p-4 flex items-center justify-between gap-x-8 border border-secondary rounded-lg'
+                            key={row.title}
+                            className='p-4 flex flex-col gap-y-4 border border-secondary rounded-lg'
                         >
-                            <section>
-                                <div className='flex items-center gap-x-3.5'>
-                                    <Image
-                                        src='/images/icons/success.svg'
-                                        alt='success'
-                                        width={32}
-                                        height={32}
-                                        className={cn('h-auto', done ? 'opacity-100' : 'opacity-30')}
-                                    />
-                                    <div className='flex flex-col gap-y-1.5'>
-                                        <h5 className='text-sm'>{leg.title}</h5>
-                                        <h6 className='flex items-center gap-x-2 text-sm text-secondary'>
-                                            {done ? (
-                                                <span className='text-foreground font-medium tabular-nums'>
-                                                    {usd(leg.amount)} USDC
-                                                </span>
-                                            ) : (
-                                                <span className='text-secondary'>—</span>
-                                            )}
-                                        </h6>
-                                    </div>
+                            <div className='flex items-center gap-x-3'>
+                                <Image
+                                    src='/images/icons/success.svg'
+                                    alt='success'
+                                    width={28}
+                                    height={28}
+                                    className={cn('h-auto', done ? 'opacity-100' : 'opacity-30')}
+                                />
+                                <div className='flex flex-col gap-y-1'>
+                                    <h5 className='text-sm'>{row.title}</h5>
+                                    <span
+                                        className={cn(
+                                            'text-sm tabular-nums',
+                                            done ? 'text-foreground font-medium' : 'text-secondary',
+                                        )}
+                                    >
+                                        {done ? `${usd(row.amount)} USDC` : '—'}
+                                    </span>
                                 </div>
+                            </div>
 
-                                <div className='mt-5 flex items-center gap-x-2 text-xs font-light text-secondary'>
-                                    {leg.event?.txHash ? (
-                                        <a
-                                            className='underline hover:text-foreground'
-                                            href={`${EXPLORER}/tx/${leg.event.txHash}`}
-                                            target='_blank'
-                                            rel='noreferrer'
-                                        >
-                                            Tx: {shortAddress(leg.event.txHash)}
-                                        </a>
-                                    ) : leg.event?.transactionId ? (
-                                        <h5>Confirming on chain…</h5>
-                                    ) : (
-                                        <h5>{done ? leg.party : 'Not started'}</h5>
-                                    )}
-                                </div>
-                            </section>
-
-                            {leg.event?.txHash && EXPLORER && (
-                                <a
-                                    href={`${EXPLORER}/tx/${leg.event.txHash}`}
-                                    target='_blank'
-                                    rel='noreferrer'
-                                >
-                                    <Image
-                                        src='/images/icons/redirect-button.svg'
-                                        alt='link'
-                                        width={24}
-                                        height={40}
-                                        className='h-auto'
-                                    />
-                                </a>
-                            )}
+                            <div className='text-xs font-light text-secondary'>
+                                {row.event?.txHash ? (
+                                    <a
+                                        className='underline hover:text-foreground'
+                                        href={`${EXPLORER}/tx/${row.event.txHash}`}
+                                        target='_blank'
+                                        rel='noreferrer'
+                                    >
+                                        Tx: {shortAddress(row.event.txHash)}
+                                    </a>
+                                ) : row.event?.transactionId ? (
+                                    <span>Confirming on chain…</span>
+                                ) : (
+                                    <span>{done ? row.subtitle : 'Not started'}</span>
+                                )}
+                            </div>
                         </figure>
                     );
                 })}

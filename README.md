@@ -52,11 +52,12 @@ Wallets are created as EOAs. Smart contract accounts exist for gas sponsorship a
 execution; since every wallet here holds the token that pays for gas, an SCA would add a
 per-wallet deployment and a paymaster for nothing.
 
-### What a task is
+### What an order is
 
-A task is one leg of the fulfilment route, not a free-form unit of work. The simulator has one
-controller per robot class and each performs exactly one leg, so half a leg is not something a
-robot can be asked to do.
+An order is one item moved the whole way through the warehouse. It books **three robots, one
+per class**, and they run in sequence because each hands the item to the next. The simulator
+has one controller per class and each performs exactly one leg, so half a leg is not something
+a robot can be asked to do.
 
 | Class | Leg | Moves on the floor plan |
 | --- | --- | --- |
@@ -65,12 +66,16 @@ robot can be asked to do.
 | Delivery | Packing Area → Delivery Area | 5 approach, 6 carry |
 
 Each move is reported as it finishes, so the floor plan fills one arrow at a time and the log
-reads as the route the robot took. A leg only counts as a completed task once both of its moves
-are done — a half-finished leg still bills runtime, but not a task.
+reads as the route the item took. The sixth move settles the order: there is nothing to press.
 
-Renting a robot books runs of its own leg: the class decides the work, and the renter chooses
-how many times to repeat it. `GET /floor-plan` serves the route so the fleet, the dispatch
-modal and the live floor plan all describe the same model.
+**Three robots means three owners.** Each leg is priced on its own robot's rate card and its own
+surge, and each owner is paid for their leg alone — a leg's clock starts when the previous robot
+sets the item down, so nobody is billed for another robot's time. The platform fee is taken per
+leg, which is what keeps `Σ payouts + fee == fare` exact rather than approximately right.
+
+Because an order holds three legs at once, the authorization is roughly three times a single
+leg's. `MAX_BILLABLE_MINUTES` is the lever: it caps each leg, and raising it raises the balance
+a renter needs before they can order at all.
 
 ### Pricing
 
