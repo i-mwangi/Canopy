@@ -101,10 +101,11 @@ def main() -> int:
     assert len(completes) == 1, f"expected one complete call, saw {len(completes)}"
     assert len(settles) == 1, f"expected one settle call, saw {len(settles)}"
 
-    tasks = [reading["tasksCompleted"] for reading in meters]
+    moves = [reading["movesCompleted"] for reading in meters]
 
-    assert tasks == sorted(tasks), f"task count went backwards: {tasks}"
-    assert completes[0]["tasksCompleted"] == 3, f"final reading was {completes[0]}"
+    assert moves == sorted(moves), f"move count went backwards: {moves}"
+    assert completes[0]["movesCompleted"] == 6, f"three tasks is six moves, saw {completes[0]}"
+    assert 1 in moves, "the approach must be reported before the carry completes the leg"
     assert all("meteredMinutes" not in reading for reading in meters), (
         "the agent must not report runtime; the marketplace measures it"
     )

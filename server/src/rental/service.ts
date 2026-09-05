@@ -9,6 +9,8 @@ import {
   quoteFare,
   splitFare,
   surgeBps,
+  tasksFromMoves,
+  MOVES_PER_TASK,
   type MeterReading,
   type RateCard,
 } from '../pricing/fare.ts';
@@ -190,7 +192,7 @@ export class RentalService {
       authorizedAmount: quote.authorization,
       surgeBps: quote.surgeBps,
       rates: robot.rates,
-      reading: { meteredMinutes: 0, tasksCompleted: 0 },
+      reading: { meteredMinutes: 0, movesCompleted: 0, tasksCompleted: 0 },
       startedAt: Date.now(),
     };
 
@@ -222,13 +224,15 @@ export class RentalService {
    * clock. Taking runtime from the caller would let a fare drift away from the time actually
    * spent, which is the one number both sides can check.
    */
-  async recordMeter(rentalId: string, progress: { tasksCompleted: number }): Promise<Rental> {
+  async recordMeter(rentalId: string, progress: { movesCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
+    const movesCompleted = Math.max(rental.reading.movesCompleted, progress.movesCompleted);
     const next: MeterReading = {
       meteredMinutes: this.runtimeMinutes(rental),
-      tasksCompleted: Math.max(rental.reading.tasksCompleted, progress.tasksCompleted),
+      movesCompleted,
+      tasksCompleted: tasksFromMoves(movesCompleted),
     };
 
     if (rental.onChainId !== undefined) {
@@ -238,14 +242,19 @@ export class RentalService {
     const updated: Rental = { ...rental, reading: next };
     await this.rentals.put(updated);
 
+    // Name the move that just finished rather than the running total, so the log reads as the
+    // route the robot took.
     const leg = legFor(rental.class_);
-    this.events.append({
-      rentalId,
-      kind: 'meter_recorded',
-      label: `${leg.name} ${next.tasksCompleted} complete`,
-      detail: describeLeg(leg),
-      phase: 'work',
-    });
+    for (let move = rental.reading.movesCompleted; move < movesCompleted; move += 1) {
+      const step = leg.moves[move % MOVES_PER_TASK]!;
+      this.events.append({
+        rentalId,
+        kind: 'meter_recorded',
+        label: `${leg.name} ${tasksFromMoves(move) + 1} · move ${step.step}`,
+        detail: step.label,
+        phase: 'work',
+      });
+    }
 
     return updated;
   }
@@ -254,13 +263,15 @@ export class RentalService {
    * Stops the meter and fixes the billable runtime at the elapsed time. Nothing is charged
    * until `settleRental` runs.
    */
-  async completeRental(rentalId: string, progress?: { tasksCompleted: number }): Promise<Rental> {
+  async completeRental(rentalId: string, progress?: { movesCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
+    const movesCompleted = Math.max(rental.reading.movesCompleted, progress?.movesCompleted ?? 0);
     const reading: MeterReading = {
       meteredMinutes: this.runtimeMinutes(rental),
-      tasksCompleted: Math.max(rental.reading.tasksCompleted, progress?.tasksCompleted ?? 0),
+      movesCompleted,
+      tasksCompleted: tasksFromMoves(movesCompleted),
     };
 
     if (rental.onChainId !== undefined) {
@@ -274,7 +285,7 @@ export class RentalService {
       rentalId,
       kind: 'rental_completed',
       label: 'Meter stopped',
-      detail: `Final reading ${Math.ceil(reading.meteredMinutes)} min · ${reading.tasksCompleted} tasks`,
+      detail: `${reading.tasksCompleted} × ${legFor(rental.class_).name} in ${reading.movesCompleted} moves, ${Math.ceil(reading.meteredMinutes)} min`,
       phase: 'work',
     });
 

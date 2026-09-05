@@ -16,6 +16,11 @@ interface Props {
 export default function Floor({ rental, runtimeMinutes, liveFare, className }: Props) {
     const running = rental.status === 'active';
 
+    // Arrows show progress through the leg being run now. A finished leg leaves both filled,
+    // and the next approach starts the pair again.
+    const { movesCompleted } = rental.meter;
+    const movesInCurrentLeg = movesCompleted === 0 ? 0 : movesCompleted % 2 === 0 ? 2 : 1;
+
     return (
         <section className={className}>
             <section className='mb-4 flex items-center gap-x-2.5'>
@@ -43,7 +48,7 @@ export default function Floor({ rental, runtimeMinutes, liveFare, className }: P
 
                 <FloorPlan
                     activeClass={rental.class}
-                    completedMoves={rental.meter.tasksCompleted > 0 ? 2 : 0}
+                    completedMoves={movesInCurrentLeg}
                     running={running}
                 />
 
@@ -62,7 +67,7 @@ export default function Floor({ rental, runtimeMinutes, liveFare, className }: P
                         </div>
                     </div>
                     <h5 className='tabular-nums'>
-                        {rental.meter.tasksCompleted} × {rental.leg.name} ·{' '}
+                        {rental.meter.tasksCompleted} × {rental.leg.name} · {movesCompleted} moves ·{' '}
                         {Math.ceil(runtimeMinutes)} min billed
                     </h5>
                 </div>

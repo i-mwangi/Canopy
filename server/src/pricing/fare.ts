@@ -9,10 +9,22 @@ export type RateCard = {
   minimumFare: bigint;
 };
 
-export type MeterReading = {
+/** What a fare is computed from. A half-finished leg is not a task and is not billed as one. */
+export type BillableWork = {
   meteredMinutes: number;
   tasksCompleted: number;
 };
+
+export type MeterReading = BillableWork & {
+  /** Individual moves finished: each leg is an approach followed by a carry. */
+  movesCompleted: number;
+};
+
+export const MOVES_PER_TASK = 2;
+
+export function tasksFromMoves(movesCompleted: number): number {
+  return Math.floor(Math.max(0, movesCompleted) / MOVES_PER_TASK);
+}
 
 export type FareBreakdown = {
   baseFare: bigint;
@@ -85,7 +97,7 @@ export function splitFare(fare: bigint, platformFeeBps: number): { platformFee: 
 /** Prices a meter reading against a rate card. */
 export function quoteFare(params: {
   rates: RateCard;
-  reading: MeterReading;
+  reading: BillableWork;
   surgeBps: number;
   platformFeeBps: number;
 }): FareBreakdown {

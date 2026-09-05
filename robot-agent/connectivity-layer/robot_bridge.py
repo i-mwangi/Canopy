@@ -65,13 +65,21 @@ class RobotBridge:
 
     # -- task execution -------------------------------------------------------------
 
-    def run_task(self, robot_class: str, robot_id: str, rental_id: str, task_index: int) -> None:
-        """Runs one task and blocks until the robot reports it complete."""
+    def run_task(
+        self,
+        robot_class: str,
+        robot_id: str,
+        rental_id: str,
+        task_index: int,
+        move_index: int = 0,
+    ) -> None:
+        """Runs one move of a task and blocks until the robot reports it complete."""
         command = {
             "rentalId": rental_id,
             "robotId": robot_id,
             "robotClass": robot_class,
             "taskIndex": task_index,
+            "moveIndex": move_index,
         }
 
         if BACKEND == "http":

@@ -200,8 +200,8 @@ describe('rental lifecycle', () => {
   it('bills the time actually elapsed rather than anything the caller supplies', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
 
-    // A caller cannot inflate runtime: the meter only accepts a task count.
-    await service.recordMeter(rental.id, { tasksCompleted: 2 });
+    // A caller cannot inflate runtime: the meter only accepts finished moves.
+    await service.recordMeter(rental.id, { movesCompleted: 4 });
     const metered = await service.getRental(rental.id);
 
     // The rental has just opened, so barely any time has passed.
@@ -209,10 +209,32 @@ describe('rental lifecycle', () => {
     assert.equal(metered!.reading.tasksCompleted, 2);
   });
 
+  it('counts a task only once both of its moves are done', async () => {
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+
+    const afterApproach = await service.recordMeter(rental.id, { movesCompleted: 1 });
+    assert.equal(afterApproach.reading.movesCompleted, 1);
+    assert.equal(afterApproach.reading.tasksCompleted, 0, 'an approach alone is not a task');
+
+    const afterCarry = await service.recordMeter(rental.id, { movesCompleted: 2 });
+    assert.equal(afterCarry.reading.tasksCompleted, 1);
+  });
+
+  it('logs each move separately so the route can be followed', async () => {
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+
+    await service.recordMeter(rental.id, { movesCompleted: 1 });
+    await service.recordMeter(rental.id, { movesCompleted: 2 });
+
+    const moves = service.timeline(rental.id).filter((event) => event.kind === 'meter_recorded');
+    assert.equal(moves.length, 2, 'one entry per move, not one per reading');
+    assert.notEqual(moves[0]!.detail, moves[1]!.detail, 'the approach and the carry differ');
+  });
+
   it('charges the metered fare and refunds the rest of the hold', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
 
-    await service.recordMeter(rental.id, { tasksCompleted: 2 });
+    await service.recordMeter(rental.id, { movesCompleted: 4 });
     await service.completeRental(rental.id);
     const settled = await service.settleRental(rental.id);
 
@@ -231,7 +253,7 @@ describe('rental lifecycle', () => {
 
   it('moves the split on chain from the renter wallet', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
-    await service.completeRental(rental.id, { tasksCompleted: 2 });
+    await service.completeRental(rental.id, { movesCompleted: 4 });
     await service.settleRental(rental.id);
 
     assert.equal(wallets.transfers.length, 2);
@@ -244,7 +266,7 @@ describe('rental lifecycle', () => {
 
   it('caps the fare at the authorization when a rental overruns', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
-    await service.completeRental(rental.id, { tasksCompleted: 50 });
+    await service.completeRental(rental.id, { movesCompleted: 100 });
 
     const settled = await service.settleRental(rental.id);
     assert.equal(settled.fare, rental.authorizedAmount);
@@ -289,7 +311,7 @@ describe('rental lifecycle', () => {
     );
 
     const rental = await direct.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
-    await direct.completeRental(rental.id, { tasksCompleted: 2 });
+    await direct.completeRental(rental.id, { movesCompleted: 4 });
     const settled = await direct.settleRental(rental.id);
 
     assert.ok(settled.ownerPayout! > 0n);
@@ -316,7 +338,7 @@ describe('rental lifecycle', () => {
 
   it('settles only once when called again', async () => {
     const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
-    await service.completeRental(rental.id, { tasksCompleted: 2 });
+    await service.completeRental(rental.id, { movesCompleted: 4 });
 
     const settled = await service.settleRental(rental.id);
     await service.settleRental(rental.id);

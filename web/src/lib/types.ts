@@ -32,6 +32,7 @@ export type Robot = {
 
 export type MeterReading = {
     meteredMinutes: number;
+    movesCompleted: number;
     tasksCompleted: number;
 };
 

@@ -341,14 +341,14 @@ export async function createServer() {
   /** Called by the robot connectivity layer as work progresses. */
   app.post('/rentals/:rentalId/meter', async (req, res) => {
     const rental = await rentals.recordMeter(req.params.rentalId, {
-      tasksCompleted: Number(req.body.tasksCompleted ?? 0),
+      movesCompleted: Number(req.body.movesCompleted ?? 0),
     });
     res.json(renderRental(rental));
   });
 
   app.post('/rentals/:rentalId/complete', async (req, res) => {
     const rental = await rentals.completeRental(req.params.rentalId, {
-      tasksCompleted: Number(req.body.tasksCompleted ?? 0),
+      movesCompleted: Number(req.body.movesCompleted ?? 0),
     });
     res.json(renderRental(rental));
   });

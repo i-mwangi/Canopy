@@ -64,6 +64,10 @@ robot can be asked to do.
 | Packing | Collecting Area → Packing Area | 3 approach, 4 carry |
 | Delivery | Packing Area → Delivery Area | 5 approach, 6 carry |
 
+Each move is reported as it finishes, so the floor plan fills one arrow at a time and the log
+reads as the route the robot took. A leg only counts as a completed task once both of its moves
+are done — a half-finished leg still bills runtime, but not a task.
+
 Renting a robot books runs of its own leg: the class decides the work, and the renter chooses
 how many times to repeat it. `GET /floor-plan` serves the route so the fleet, the dispatch
 modal and the live floor plan all describe the same model.
@@ -144,7 +148,7 @@ readings back on a fixed cadence.
 
 ```
 POST /dispatch          {rentalId, robotId, robotClass, tasks}   marketplace → agent
-POST /rentals/:id/meter {tasksCompleted}                          agent → marketplace, every 15s
+POST /rentals/:id/meter {movesCompleted}                          agent → marketplace, per move
 POST /rentals/:id/complete + /settle                             agent → marketplace, at the end
 GET  /jobs/:rentalId    current reading and fault state
 POST /jobs/:rentalId/abort

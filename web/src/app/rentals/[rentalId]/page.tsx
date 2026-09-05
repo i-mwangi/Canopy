@@ -60,7 +60,7 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
         if (!rental) return;
         setBusy(true);
         try {
-            if (action === 'complete') await api.complete(rental.id, rental.meter.tasksCompleted);
+            if (action === 'complete') await api.complete(rental.id, rental.meter.movesCompleted);
             if (action === 'settle') await api.settle(rental.id);
             if (action === 'cancel') await api.cancel(rental.id, 'cancelled by renter');
             await load();
@@ -72,19 +72,24 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
         }
     }
 
-    /** Reports one finished task, standing in for the robot agent during a walkthrough. */
-    async function completeTask() {
+    /** Reports one finished move, standing in for the robot agent during a walkthrough. */
+    async function completeMove() {
         if (!rental) return;
         setBusy(true);
         try {
-            await api.meter(rental.id, rental.meter.tasksCompleted + 1);
+            await api.meter(rental.id, rental.meter.movesCompleted + 1);
             await load();
         } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'Could not report a completed task');
+            setError(cause instanceof Error ? cause.message : 'Could not report a completed move');
         } finally {
             setBusy(false);
         }
     }
+
+    /** Which move of the current leg the robot is on: the approach, then the carry. */
+    const nextMove = rental
+        ? rental.leg.moves[rental.meter.movesCompleted % 2]
+        : undefined;
 
     // The server bills the elapsed time it measures, so the page shows that same number
     // rather than a second, unrelated clock.
@@ -153,9 +158,10 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
                                         <button
                                             className='white-button !py-2.5'
                                             disabled={busy}
-                                            onClick={() => void completeTask()}
+                                            onClick={() => void completeMove()}
+                                            title={nextMove?.label}
                                         >
-                                            Complete a task
+                                            Complete move {nextMove?.step}
                                         </button>
                                         <button
                                             className='white-button !py-2.5'

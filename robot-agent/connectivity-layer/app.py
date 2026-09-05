@@ -27,6 +27,10 @@ AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "")
 METER_INTERVAL_SECONDS = float(os.environ.get("METER_INTERVAL_SECONDS", "15"))
 STATE_DIR = os.environ.get("ROBOT_STATE_DIR", "./state")
 
+# A leg is an approach followed by a carry. Both are reported, so the floor plan can fill in
+# one arrow at a time rather than jumping a whole leg at once.
+MOVES_PER_TASK = 2
+
 app = Flask(__name__)
 
 
@@ -39,7 +43,7 @@ class Job:
     robot_class: str
     started_at: float
     tasks_total: int
-    tasks_completed: int = 0
+    moves_completed: int = 0
     finished: bool = False
     error: Optional[str] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -48,18 +52,19 @@ class Job:
         return (time.monotonic() - self.started_at) / 60.0
 
     def reading(self) -> dict:
-        """What the marketplace is told: finished work only.
+        """What the marketplace is told: finished moves only.
 
         Runtime is measured by the marketplace between dispatch and completion, so reporting
         minutes from here would be a number nobody bills on and two clocks to reconcile.
         """
-        return {"tasksCompleted": self.tasks_completed}
+        return {"movesCompleted": self.moves_completed}
 
     def local_reading(self) -> dict:
         """Everything the agent knows, for its own status endpoint."""
         return {
             "meteredMinutes": round(self.metered_minutes(), 4),
-            "tasksCompleted": self.tasks_completed,
+            "movesCompleted": self.moves_completed,
+            "tasksCompleted": self.moves_completed // MOVES_PER_TASK,
         }
 
 
@@ -113,12 +118,17 @@ def meter_loop(job: Job) -> None:
 
 
 def run_job(job: Job) -> None:
-    """Drives the robot through the job, one task at a time."""
+    """Drives the robot through the job, one move at a time."""
     try:
         for index in range(job.tasks_total):
-            bridge.run_task(job.robot_class, job.robot_id, job.rental_id, index)
-            with job.lock:
-                job.tasks_completed = index + 1
+            for move in range(MOVES_PER_TASK):
+                bridge.run_task(job.robot_class, job.robot_id, job.rental_id, index, move)
+                with job.lock:
+                    job.moves_completed = index * MOVES_PER_TASK + move + 1
+
+                # Report immediately rather than waiting for the cadence, so a move shows up
+                # on the floor plan as the robot finishes it.
+                post_to_marketplace(f"/rentals/{job.rental_id}/meter", job.reading())
     except RobotUnavailable as error:
         with job.lock:
             job.error = str(error)

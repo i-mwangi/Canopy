@@ -77,11 +77,17 @@ class Controller:
             return STATE_IDLE
 
     def _simulate_motion(self, command: dict) -> None:
-        """Stands in for the real motion. Each task takes a few seconds of runtime."""
+        """Stands in for the real motion.
+
+        A leg is two moves: index 0 is the approach, index 1 is the carry. Webots drives the
+        same split, which is why they are executed and reported one at a time.
+        """
         task_index = command.get("taskIndex", 0)
-        print(f"[{self.key}] running task {task_index} for rental {command.get('rentalId')}")
+        move = "approach" if command.get("moveIndex", 0) == 0 else "carry"
+
+        print(f"[{self.key}] task {task_index} {move} for rental {command.get('rentalId')}")
         time.sleep(3)
-        print(f"[{self.key}] task {task_index} complete")
+        print(f"[{self.key}] task {task_index} {move} complete")
 
 
 def main() -> None:
