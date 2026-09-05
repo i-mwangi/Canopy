@@ -110,6 +110,10 @@ class FakeWallets {
 
     return { transactionId: `tx-${this.transfers.length}`, state: 'COMPLETE' };
   }
+
+  async waitForTransaction(transactionId: string) {
+    return { transactionId, state: 'COMPLETE', txHash: `0xhash-${transactionId}` };
+  }
 }
 
 describe('rental lifecycle', () => {

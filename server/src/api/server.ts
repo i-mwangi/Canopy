@@ -303,6 +303,7 @@ export async function createServer() {
         label: event.label,
         detail: event.detail,
         amount: event.amount === undefined ? undefined : toDecimalString(event.amount),
+        transactionId: event.transactionId,
         txHash: event.txHash,
         phase: event.phase,
         createdAt: event.createdAt,

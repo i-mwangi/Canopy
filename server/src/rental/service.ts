@@ -351,9 +351,11 @@ export class RentalService {
             ? `USDC transferred to ${owner.address}, an address the owner controls`
             : `USDC transferred to ${owner.address}`,
         amount: ownerPayout,
-        txHash: receipt.txHash ?? receipt.transactionId,
+        transactionId: receipt.transactionId,
+        txHash: receipt.txHash,
         phase: 'settle',
       });
+      this.resolveTxHash(receipt.transactionId);
 
       // A direct owner has already been paid to their own address. Crediting the ledger and
       // stopping there would show a spendable platform balance that no wallet backs, and a
@@ -384,9 +386,11 @@ export class RentalService {
         label: 'Platform fee taken',
         detail: `USDC transferred to the revenue wallet`,
         amount: platformFee,
-        txHash: receipt.txHash ?? receipt.transactionId,
+        transactionId: receipt.transactionId,
+        txHash: receipt.txHash,
         phase: 'settle',
       });
+      this.resolveTxHash(receipt.transactionId);
     }
 
     if (rental.onChainId !== undefined) {
@@ -455,6 +459,27 @@ export class RentalService {
 
   timeline(rentalId: string) {
     return this.events.list(rentalId);
+  }
+
+  /**
+   * Waits for a transfer to land and fills its hash into the event log.
+   *
+   * Deliberately not awaited: settlement should not block on a confirmation, and a rental
+   * whose hash never resolves is still correctly settled — the link simply stays absent.
+   */
+  private resolveTxHash(transactionId: string): void {
+    try {
+      void this.wallets
+        .waitForTransaction(transactionId)
+        .then((confirmed) => {
+          if (confirmed.txHash) this.events.attachTxHash(transactionId, confirmed.txHash);
+        })
+        .catch(() => {
+          // A failed confirmation is visible in the ledger and in Circle; the link is cosmetic.
+        });
+    } catch {
+      // Settlement has already happened. Nothing about a missing link is worth throwing over.
+    }
   }
 
   /**

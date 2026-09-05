@@ -89,6 +89,7 @@ export type RentalEvent = {
     label: string;
     detail?: string;
     amount?: string;
+    transactionId?: string;
     txHash?: string;
     phase: RentalPhase;
     createdAt: number;

@@ -68,6 +68,8 @@ export default function Logs({ events, className }: Props) {
                                             {copied === event.id ? 'Copied' : 'Copy'}
                                         </button>
                                     </>
+                                ) : event.transactionId ? (
+                                    <h5>Confirming on chain…</h5>
                                 ) : (
                                     <h5>{event.detail ?? '—'}</h5>
                                 )}

@@ -79,7 +79,16 @@ export default function Settlement({ rental, events, className }: Props) {
 
                                 <div className='mt-5 flex items-center gap-x-2 text-xs font-light text-secondary'>
                                     {leg.event?.txHash ? (
-                                        <h5>Tx: {shortAddress(leg.event.txHash)}</h5>
+                                        <a
+                                            className='underline hover:text-foreground'
+                                            href={`${EXPLORER}/tx/${leg.event.txHash}`}
+                                            target='_blank'
+                                            rel='noreferrer'
+                                        >
+                                            Tx: {shortAddress(leg.event.txHash)}
+                                        </a>
+                                    ) : leg.event?.transactionId ? (
+                                        <h5>Confirming on chain…</h5>
                                     ) : (
                                         <h5>{done ? leg.party : 'Not started'}</h5>
                                     )}

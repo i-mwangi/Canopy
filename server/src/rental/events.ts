@@ -17,7 +17,9 @@ export type RentalEvent = {
   label: string;
   detail?: string;
   amount?: bigint;
-  /** Set once the write that produced this event has a transaction behind it. */
+  /** Circle's id for the transfer, known immediately. */
+  transactionId?: string;
+  /** The on-chain hash, known only once the transfer confirms. */
   txHash?: string;
   /** Phase the event belongs to, so the UI can group a rental into stages. */
   phase: 'authorize' | 'work' | 'settle';
@@ -38,13 +40,17 @@ export class RentalEventLog {
     return recorded;
   }
 
-  /** Attaches a transaction hash to the most recent event of a kind, once it is known. */
-  attachTx(rentalId: string, kind: RentalEventKind, txHash: string): void {
-    for (let index = this.events.length - 1; index >= 0; index -= 1) {
-      const event = this.events[index];
-      if (event && event.rentalId === rentalId && event.kind === kind && !event.txHash) {
+  /**
+   * Attaches the on-chain hash once a transfer confirms.
+   *
+   * Circle returns an id straight away but the hash only exists after the transaction lands,
+   * so an event is written without one and filled in later. Without this the explorer links
+   * would point at an id no block explorer has ever heard of.
+   */
+  attachTxHash(transactionId: string, txHash: string): void {
+    for (const event of this.events) {
+      if (event.transactionId === transactionId && !event.txHash) {
         event.txHash = txHash;
-        return;
       }
     }
   }
