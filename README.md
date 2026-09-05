@@ -62,9 +62,11 @@ caller sends can inflate them.
 That moves the cost into the authorization. With no duration estimate to size against, the hold
 has to cover the worst case — the tasks requested plus `MAX_BILLABLE_MINUTES` of runtime. Raise
 that ceiling and jobs may run longer, but a renter needs a bigger balance before they can
-dispatch at all. A rental left open past the ceiling bills the ceiling, not the whole night. Surge is derived from fleet occupancy: a class of robot prices at 1.0× while at least
-half the fleet is free, and climbs quadratically as the pool empties, hard-capped so a nearly
-empty fleet cannot produce a runaway quote.
+dispatch at all. A rental left open past the ceiling bills the ceiling, not the whole night.
+
+Surge is derived from fleet occupancy: a class of robot prices at 1.0× while at least half the
+fleet is free, and climbs quadratically as the pool empties, hard-capped so a nearly empty fleet
+cannot produce a runaway quote.
 
 Partial minutes round up. The platform fee is taken from the fare, so `fee + payout == fare`
 exactly — no unit is created or lost in the split.
@@ -126,7 +128,7 @@ readings back on a fixed cadence.
 
 ```
 POST /dispatch          {rentalId, robotId, robotClass, tasks}   marketplace → agent
-POST /rentals/:id/meter {meteredMinutes, tasksCompleted}         agent → marketplace, every 15s
+POST /rentals/:id/meter {tasksCompleted}                          agent → marketplace, every 15s
 POST /rentals/:id/complete + /settle                             agent → marketplace, at the end
 GET  /jobs/:rentalId    current reading and fault state
 POST /jobs/:rentalId/abort
@@ -134,7 +136,8 @@ GET  /health            claimed robots and active job count
 ```
 
 Readings are cumulative and monotonic, so a dropped or late-arriving one cannot corrupt the
-fare — the next reading supersedes it. If the robot faults partway through, the agent cancels
+fare — the next reading supersedes it. The agent reports only what the robot finished; runtime
+is the marketplace's own clock, so a misconfigured agent cannot inflate a fare. If the robot faults partway through, the agent cancels
 the rental instead of completing it, and the renter's hold is released in full.
 
 Two transport backends behind one interface, chosen with `ROBOT_BACKEND`:

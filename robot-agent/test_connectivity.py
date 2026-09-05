@@ -101,13 +101,13 @@ def main() -> int:
     assert len(completes) == 1, f"expected one complete call, saw {len(completes)}"
     assert len(settles) == 1, f"expected one settle call, saw {len(settles)}"
 
-    minutes = [reading["meteredMinutes"] for reading in meters]
     tasks = [reading["tasksCompleted"] for reading in meters]
 
-    assert minutes == sorted(minutes), f"meter minutes went backwards: {minutes}"
     assert tasks == sorted(tasks), f"task count went backwards: {tasks}"
     assert completes[0]["tasksCompleted"] == 3, f"final reading was {completes[0]}"
-    assert completes[0]["meteredMinutes"] >= max(minutes), "final reading regressed"
+    assert all("meteredMinutes" not in reading for reading in meters), (
+        "the agent must not report runtime; the marketplace measures it"
+    )
 
     status = client.get("/jobs/rental-1").get_json()
     assert status["finished"] is True

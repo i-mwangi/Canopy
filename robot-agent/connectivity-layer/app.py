@@ -48,6 +48,15 @@ class Job:
         return (time.monotonic() - self.started_at) / 60.0
 
     def reading(self) -> dict:
+        """What the marketplace is told: finished work only.
+
+        Runtime is measured by the marketplace between dispatch and completion, so reporting
+        minutes from here would be a number nobody bills on and two clocks to reconcile.
+        """
+        return {"tasksCompleted": self.tasks_completed}
+
+    def local_reading(self) -> dict:
+        """Everything the agent knows, for its own status endpoint."""
         return {
             "meteredMinutes": round(self.metered_minutes(), 4),
             "tasksCompleted": self.tasks_completed,
@@ -178,7 +187,7 @@ def job_status(rental_id: str):
                 "robotClass": job.robot_class,
                 "finished": job.finished,
                 "error": job.error,
-                **job.reading(),
+                **job.local_reading(),
             }
         )
 
