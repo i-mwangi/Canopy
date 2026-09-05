@@ -50,6 +50,7 @@ export default function RobotCard({ robot, onRent }: Props) {
                 <h5 className='text-sm text-secondary'>
                     {robot.class} · {robot.completedRentals} rentals
                 </h5>
+                <h6 className='-mt-2 text-xs text-secondary'>{robot.leg.description}</h6>
 
                 <section className='w-full grid grid-cols-3 items-end justify-items-center text-secondary [&_h5]:text-xs'>
                     <div>

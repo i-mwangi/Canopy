@@ -9,10 +9,21 @@ export type RateCard = {
     minimumFare: string;
 };
 
+export type Move = { step: number; label: string };
+
+export type TaskLeg = {
+    name: string;
+    from: string;
+    to: string;
+    description: string;
+    moves: [Move, Move];
+};
+
 export type Robot = {
     id: string;
     owner: string;
     class: RobotClass;
+    leg: TaskLeg;
     status: RobotStatus;
     rates: RateCard;
     completedRentals: number;
@@ -30,6 +41,8 @@ export type Rental = {
     id: string;
     onChainId?: string;
     robotId: string;
+    class: RobotClass;
+    leg: TaskLeg;
     status: RentalStatus;
     surgeBps: number;
     authorized: string;

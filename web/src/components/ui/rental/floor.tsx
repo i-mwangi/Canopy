@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 
+import FloorPlan from '@/components/ui/rental/floor-plan';
 import { cn, formatDuration, usd } from '@/lib/utils';
 import type { Rental } from '@/lib/types';
 
@@ -25,53 +26,45 @@ export default function Floor({ rental, runtimeMinutes, liveFare, className }: P
                 </figure>
             </section>
 
-            <section className='relative h-[400px] flex flex-col justify-between p-6 border border-secondary rounded-lg overflow-hidden'>
-                <Image
-                    src='/images/warehouse-design.svg'
-                    alt='warehouse floor'
-                    fill
-                    className={cn(
-                        'object-contain object-center transition-opacity',
-                        running ? 'opacity-100' : 'opacity-40',
-                    )}
-                />
-
-                <div className='relative z-10 flex items-start justify-between'>
-                    <figure className='px-3 py-2 bg-background/90 border border-foreground rounded-lg'>
+            <section className='px-6 py-6 flex flex-col gap-y-5 border border-secondary rounded-lg'>
+                <div className='flex items-start justify-between gap-x-4'>
+                    <figure className='px-3 py-2 border border-foreground rounded-lg'>
                         <h6 className='text-xs text-secondary'>Live fare</h6>
                         <h3 className='text-2xl font-medium tabular-nums'>{usd(liveFare)} USDC</h3>
                     </figure>
 
-                    <figure className='px-3 py-2 bg-background/90 border border-secondary rounded-lg text-right'>
+                    <figure className='px-3 py-2 border border-secondary rounded-lg text-right'>
                         <h6 className='text-xs text-secondary'>Runtime billed</h6>
-                        <h3 className='text-2xl font-medium tabular-nums'>{formatDuration(runtimeMinutes)}</h3>
+                        <h3 className='text-2xl font-medium tabular-nums'>
+                            {formatDuration(runtimeMinutes)}
+                        </h3>
                     </figure>
                 </div>
 
-                <div className='relative z-10 flex items-end justify-between gap-x-4'>
-                    <figure className='px-3 py-2 flex items-center gap-x-3 bg-background/90 border border-secondary rounded-lg'>
+                <FloorPlan
+                    activeClass={rental.class}
+                    completedMoves={rental.meter.tasksCompleted > 0 ? 2 : 0}
+                    running={running}
+                />
+
+                <div className='flex items-center justify-between gap-x-4 text-sm'>
+                    <div className='flex items-center gap-x-3'>
                         <Image
                             src='/images/icons/robot.svg'
                             alt='robot'
-                            height={28}
-                            width={28}
+                            height={24}
+                            width={24}
                             className={cn('h-auto', running && 'animate-meter')}
                         />
                         <div>
                             <h6 className='text-xs text-secondary'>Robot #{rental.robotId}</h6>
-                            <h5 className='text-sm'>
-                                {rental.meter.tasksCompleted} task
-                                {rental.meter.tasksCompleted === 1 ? '' : 's'} complete
-                            </h5>
+                            <h5>{rental.leg.description}</h5>
                         </div>
-                    </figure>
-
-                    <figure className='px-3 py-2 bg-background/90 border border-secondary rounded-lg text-right'>
-                        <h6 className='text-xs text-secondary'>Billed at</h6>
-                        <h5 className='text-sm tabular-nums'>
-                            {Math.ceil(runtimeMinutes)} min · {rental.meter.tasksCompleted} tasks
-                        </h5>
-                    </figure>
+                    </div>
+                    <h5 className='tabular-nums'>
+                        {rental.meter.tasksCompleted} × {rental.leg.name} ·{' '}
+                        {Math.ceil(runtimeMinutes)} min billed
+                    </h5>
                 </div>
             </section>
         </section>

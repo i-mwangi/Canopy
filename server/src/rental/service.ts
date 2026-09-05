@@ -12,8 +12,9 @@ import {
   type MeterReading,
   type RateCard,
 } from '../pricing/fare.ts';
-import type { RentalChain } from '../chain/rental-chain.ts';
+import type { RentalChain, RobotClass } from '../chain/rental-chain.ts';
 import type { RentalEventLog } from './events.ts';
+import { describeLeg, legFor } from './legs.ts';
 
 export type RentalStatus = 'active' | 'completed' | 'settled' | 'cancelled';
 
@@ -21,6 +22,8 @@ export type Rental = {
   id: string;
   onChainId?: bigint;
   robotId: bigint;
+  /** Fixes which leg of the route this rental runs, since class decides the task. */
+  class_: RobotClass;
   renterAccountId: string;
   ownerAccountId: string;
   status: RentalStatus;
@@ -179,6 +182,7 @@ export class RentalService {
       id: rentalId,
       onChainId,
       robotId: params.robotId,
+      class_: robot.class_,
       renterAccountId: renter.id,
       ownerAccountId: ownerAccount.id,
       status: 'active',
@@ -234,11 +238,12 @@ export class RentalService {
     const updated: Rental = { ...rental, reading: next };
     await this.rentals.put(updated);
 
+    const leg = legFor(rental.class_);
     this.events.append({
       rentalId,
       kind: 'meter_recorded',
-      label: 'Meter reading',
-      detail: `${Math.ceil(next.meteredMinutes)} min · ${next.tasksCompleted} tasks`,
+      label: `${leg.name} ${next.tasksCompleted} complete`,
+      detail: describeLeg(leg),
       phase: 'work',
     });
 
@@ -316,7 +321,7 @@ export class RentalService {
       rentalId,
       kind: 'fare_captured',
       label: 'Fare captured',
-      detail: `Metered fare charged against the authorization`,
+      detail: `${rental.reading.tasksCompleted} × ${legFor(rental.class_).name} over ${Math.ceil(rental.reading.meteredMinutes)} min`,
       amount: billed,
       phase: 'settle',
     });

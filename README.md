@@ -52,6 +52,22 @@ Wallets are created as EOAs. Smart contract accounts exist for gas sponsorship a
 execution; since every wallet here holds the token that pays for gas, an SCA would add a
 per-wallet deployment and a paymaster for nothing.
 
+### What a task is
+
+A task is one leg of the fulfilment route, not a free-form unit of work. The simulator has one
+controller per robot class and each performs exactly one leg, so half a leg is not something a
+robot can be asked to do.
+
+| Class | Leg | Moves on the floor plan |
+| --- | --- | --- |
+| Picking | Product Rack → Collecting Area | 1 approach, 2 carry |
+| Packing | Collecting Area → Packing Area | 3 approach, 4 carry |
+| Delivery | Packing Area → Delivery Area | 5 approach, 6 carry |
+
+Renting a robot books runs of its own leg: the class decides the work, and the renter chooses
+how many times to repeat it. `GET /floor-plan` serves the route so the fleet, the dispatch
+modal and the live floor plan all describe the same model.
+
 ### Pricing
 
 Fare = `(base + per-minute × minutes + per-task × tasks) × surge`, floored at the rate card

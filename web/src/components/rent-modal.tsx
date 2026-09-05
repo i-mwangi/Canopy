@@ -71,8 +71,27 @@ export default function RentModal({ robot, accountId, onClose, onStarted }: Prop
                     {quote && <SurgePill bps={quote.surgeBps} />}
                 </header>
 
+                <section className='p-4 flex flex-col gap-y-3 bg-gray-background rounded-lg'>
+                    <div className='flex items-center justify-between'>
+                        <h5 className='font-medium'>One {robot.leg.name.toLowerCase()} task</h5>
+                        <span className='text-xs text-secondary'>{robot.leg.description}</span>
+                    </div>
+                    <ol className='flex flex-col gap-y-1.5 text-xs text-secondary'>
+                        {robot.leg.moves.map((move) => (
+                            <li key={move.step} className='flex items-center gap-x-2'>
+                                <span className='w-5 h-5 flex items-center justify-center rounded-full border border-secondary'>
+                                    {move.step}
+                                </span>
+                                {move.label}
+                            </li>
+                        ))}
+                    </ol>
+                </section>
+
                 <label className='flex flex-col gap-y-1.5'>
-                    <span className='text-sm text-secondary'>Tasks to complete</span>
+                    <span className='text-sm text-secondary'>
+                        How many {robot.leg.name.toLowerCase()} tasks
+                    </span>
                     <input
                         type='number'
                         min={1}
@@ -84,7 +103,7 @@ export default function RentModal({ robot, accountId, onClose, onStarted }: Prop
                 <section className='flex flex-col gap-y-2.5 text-sm'>
                     <Row label='Base fare' value={usd(robot.rates.baseFare)} />
                     <Row
-                        label={`Tasks · ${tasks}`}
+                        label={`${robot.leg.name} × ${tasks}`}
                         value={usd((Number(robot.rates.perTask) * tasks).toFixed(6))}
                     />
                     <Row label='Runtime' value={`${usd(robot.rates.perMinute)} per minute`} raw />

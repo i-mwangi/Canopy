@@ -18,9 +18,22 @@ import {
   type Rental,
 } from '../rental/service.ts';
 import { RentalEventLog } from '../rental/events.ts';
+import { describeLeg, legFor, ZONE_LABELS } from '../rental/legs.ts';
 import { StubChain, StubWalletGateway, stubConfig, STUB_OWNER_ADDRESS } from '../stub/fakes.ts';
 
 const ROBOT_CLASS_NAMES = ['Picking', 'Packing', 'Delivery'] as const;
+
+/** One task is one run of the class's leg; the UI shows the moves it is made of. */
+function renderLeg(class_: 0 | 1 | 2) {
+  const leg = legFor(class_);
+  return {
+    name: leg.name,
+    from: ZONE_LABELS[leg.from],
+    to: ZONE_LABELS[leg.to],
+    description: describeLeg(leg),
+    moves: leg.moves,
+  };
+}
 const ROBOT_STATUS_NAMES = ['Unlisted', 'Available', 'Rented', 'Maintenance'] as const;
 
 function renderRental(rental: Rental) {
@@ -28,6 +41,8 @@ function renderRental(rental: Rental) {
     id: rental.id,
     onChainId: rental.onChainId?.toString(),
     robotId: rental.robotId.toString(),
+    class: ROBOT_CLASS_NAMES[rental.class_],
+    leg: renderLeg(rental.class_),
     status: rental.status,
     surgeBps: rental.surgeBps,
     authorized: toDecimalString(rental.authorizedAmount),
@@ -238,6 +253,17 @@ export async function createServer() {
     res.json(owned.map(renderRental));
   });
 
+  /** The fixed route every job follows, so the floor plan and the fleet agree on the model. */
+  app.get('/floor-plan', async (_req, res) => {
+    res.json({
+      zones: ZONE_LABELS,
+      legs: [0, 1, 2].map((class_) => ({
+        class: ROBOT_CLASS_NAMES[class_ as 0 | 1 | 2],
+        ...renderLeg(class_ as 0 | 1 | 2),
+      })),
+    });
+  });
+
   app.get('/robots', async (_req, res) => {
     const listed = await chain.listRobots();
     res.json(
@@ -254,6 +280,7 @@ export async function createServer() {
         },
         completedRentals: robot.completedRentals,
         metadataUri: robot.metadataUri,
+        leg: renderLeg(robot.class_),
       })),
     );
   });
