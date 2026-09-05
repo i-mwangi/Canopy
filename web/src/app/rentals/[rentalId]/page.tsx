@@ -60,7 +60,7 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
         if (!rental) return;
         setBusy(true);
         try {
-            if (action === 'complete') await api.complete(rental.id, rental.meter);
+            if (action === 'complete') await api.complete(rental.id, rental.meter.tasksCompleted);
             if (action === 'settle') await api.settle(rental.id);
             if (action === 'cancel') await api.cancel(rental.id, 'cancelled by renter');
             await load();
@@ -72,24 +72,23 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
         }
     }
 
-    /** Advances the meter by hand, standing in for the robot agent during a walkthrough. */
-    async function advanceMeter() {
+    /** Reports one finished task, standing in for the robot agent during a walkthrough. */
+    async function completeTask() {
         if (!rental) return;
         setBusy(true);
         try {
-            await api.meter(rental.id, {
-                meteredMinutes: rental.meter.meteredMinutes + 2,
-                tasksCompleted: rental.meter.tasksCompleted + 1,
-            });
+            await api.meter(rental.id, rental.meter.tasksCompleted + 1);
             await load();
         } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'Could not push a meter reading');
+            setError(cause instanceof Error ? cause.message : 'Could not report a completed task');
         } finally {
             setBusy(false);
         }
     }
 
-    const wallClock = rental
+    // The server bills the elapsed time it measures, so the page shows that same number
+    // rather than a second, unrelated clock.
+    const runtimeMinutes = rental
         ? rental.status === 'active'
             ? elapsedMinutes(rental.startedAt, tick)
             : rental.meter.meteredMinutes
@@ -100,13 +99,16 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
         if (rental.fare) return rental.fare;
         if (!robot) return '0';
 
+        const minutes =
+            rental.status === 'active' ? elapsedMinutes(rental.startedAt, tick) : rental.meter.meteredMinutes;
+
         const base = Number(robot.rates.baseFare);
-        const time = Number(robot.rates.perMinute) * Math.ceil(rental.meter.meteredMinutes);
+        const time = Number(robot.rates.perMinute) * Math.ceil(minutes);
         const tasks = Number(robot.rates.perTask) * rental.meter.tasksCompleted;
         const surged = (base + time + tasks) * (rental.surgeBps / 10_000);
 
         return Math.min(surged, Number(rental.authorized)).toFixed(6);
-    }, [rental, robot]);
+    }, [rental, robot, tick]);
 
     if (!rental) {
         return (
@@ -151,9 +153,9 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
                                         <button
                                             className='white-button !py-2.5'
                                             disabled={busy}
-                                            onClick={() => void advanceMeter()}
+                                            onClick={() => void completeTask()}
                                         >
-                                            Advance meter
+                                            Complete a task
                                         </button>
                                         <button
                                             className='white-button !py-2.5'
@@ -223,7 +225,7 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
                         <Logs events={events} className='col-span-2' />
                         <Floor
                             rental={rental}
-                            wallClock={wallClock}
+                            runtimeMinutes={runtimeMinutes}
                             liveFare={liveFare}
                             className='col-span-3'
                         />

@@ -55,7 +55,14 @@ per-wallet deployment and a paymaster for nothing.
 ### Pricing
 
 Fare = `(base + per-minute × minutes + per-task × tasks) × surge`, floored at the rate card
-minimum. Surge is derived from fleet occupancy: a class of robot prices at 1.0× while at least
+minimum. Runtime is **measured, not estimated**: the renter says how many tasks they need, and
+the minutes come from the marketplace's own clock between dispatch and completion. Nothing the
+caller sends can inflate them.
+
+That moves the cost into the authorization. With no duration estimate to size against, the hold
+has to cover the worst case — the tasks requested plus `MAX_BILLABLE_MINUTES` of runtime. Raise
+that ceiling and jobs may run longer, but a renter needs a bigger balance before they can
+dispatch at all. A rental left open past the ceiling bills the ceiling, not the whole night. Surge is derived from fleet occupancy: a class of robot prices at 1.0× while at least
 half the fleet is free, and climbs quadratically as the pool empties, hard-capped so a nearly
 empty fleet cannot produce a runaway quote.
 

@@ -49,6 +49,8 @@ export type Quote = {
     platformFee: string;
     ownerPayout: string;
     authorizationHold: string;
+    maxBillableMinutes: number;
+    perMinute: string;
 };
 
 export type Balance = {

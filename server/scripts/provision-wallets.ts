@@ -30,6 +30,7 @@ function provisioningConfig(): AppConfig {
       operatingFloatFloor: 0n,
       minimumDeposit: 0n,
       minimumWithdrawal: 0n,
+      maxBillableMinutes: 60,
     },
     server: { port: 0 },
   };

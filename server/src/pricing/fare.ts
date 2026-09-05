@@ -114,21 +114,25 @@ export function quoteFare(params: {
 }
 
 /**
- * The amount to hold when a rental opens. Built from the renter's estimate plus a buffer,
- * so a rental that runs long still settles without a second authorization.
+ * The amount to hold when a rental opens.
+ *
+ * Runtime is measured rather than estimated, so the hold cannot be sized from a guess at how
+ * long the job will take. It covers the tasks the renter asked for plus the longest run the
+ * marketplace is willing to bill, and the buffer absorbs a surge move between quote and start.
  */
 export function authorizationAmount(params: {
   rates: RateCard;
-  estimate: MeterReading;
+  estimatedTasks: number;
+  maxBillableMinutes: number;
   surgeBps: number;
   bufferBps: number;
 }): bigint {
-  const quote = quoteFare({
+  const worstCase = quoteFare({
     rates: params.rates,
-    reading: params.estimate,
+    reading: { meteredMinutes: params.maxBillableMinutes, tasksCompleted: params.estimatedTasks },
     surgeBps: params.surgeBps,
     platformFeeBps: 0,
   });
 
-  return applyBps(quote.total, params.bufferBps);
+  return applyBps(worstCase.total, params.bufferBps);
 }

@@ -16,8 +16,7 @@ interface Props {
 }
 
 export default function RentModal({ robot, accountId, onClose, onStarted }: Props) {
-    const [minutes, setMinutes] = useState(20);
-    const [tasks, setTasks] = useState(4);
+    const [tasks, setTasks] = useState(1);
     const [quote, setQuote] = useState<Quote | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -27,7 +26,7 @@ export default function RentModal({ robot, accountId, onClose, onStarted }: Prop
 
         // Re-quote as the estimate changes; surge can move between keystrokes.
         const timer = setTimeout(() => {
-            api.quote(robot.id, minutes, tasks)
+            api.quote(robot.id, tasks)
                 .then((result) => {
                     if (!cancelled) {
                         setQuote(result);
@@ -43,13 +42,13 @@ export default function RentModal({ robot, accountId, onClose, onStarted }: Prop
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [robot.id, minutes, tasks]);
+    }, [robot.id, tasks]);
 
     async function dispatch() {
         setSubmitting(true);
         setError(null);
         try {
-            const rental = await api.startRental(robot.id, accountId, minutes, tasks);
+            const rental = await api.startRental(robot.id, accountId, tasks);
             onStarted(rental.id);
         } catch (cause: unknown) {
             if (cause instanceof ApiError && cause.status === 402) {
@@ -72,46 +71,36 @@ export default function RentModal({ robot, accountId, onClose, onStarted }: Prop
                     {quote && <SurgePill bps={quote.surgeBps} />}
                 </header>
 
-                <section className='grid grid-cols-2 gap-4'>
-                    <label className='flex flex-col gap-y-1.5'>
-                        <span className='text-sm text-secondary'>Estimated minutes</span>
-                        <input
-                            type='number'
-                            min={1}
-                            value={minutes}
-                            onChange={(event) => setMinutes(Math.max(0, Number(event.target.value)))}
-                        />
-                    </label>
-                    <label className='flex flex-col gap-y-1.5'>
-                        <span className='text-sm text-secondary'>Estimated tasks</span>
-                        <input
-                            type='number'
-                            min={0}
-                            value={tasks}
-                            onChange={(event) => setTasks(Math.max(0, Number(event.target.value)))}
-                        />
-                    </label>
-                </section>
+                <label className='flex flex-col gap-y-1.5'>
+                    <span className='text-sm text-secondary'>Tasks to complete</span>
+                    <input
+                        type='number'
+                        min={1}
+                        value={tasks}
+                        onChange={(event) => setTasks(Math.max(1, Number(event.target.value)))}
+                    />
+                </label>
 
                 <section className='flex flex-col gap-y-2.5 text-sm'>
                     <Row label='Base fare' value={usd(robot.rates.baseFare)} />
                     <Row
-                        label={`Runtime · ${minutes} min`}
-                        value={usd((Number(robot.rates.perMinute) * minutes).toFixed(6))}
-                    />
-                    <Row
                         label={`Tasks · ${tasks}`}
                         value={usd((Number(robot.rates.perTask) * tasks).toFixed(6))}
                     />
-                    <Row label='Estimated fare' value={usd(quote?.estimatedFare)} strong />
+                    <Row label='Runtime' value={`${usd(robot.rates.perMinute)} per minute`} raw />
+                    <hr className='my-1 border-tetriary' />
+                    <Row label='Fare before runtime' value={usd(quote?.estimatedFare)} strong />
                     <Row label='Authorization hold' value={usd(quote?.authorizationHold)} strong />
                 </section>
 
                 <figure className='note'>
                     <Image src='/images/icons/info.svg' alt='info' width={12} height={12} className='shrink-0' />
                     <h6>
-                        The hold is a reservation, not a charge. You are billed for the metered fare when
-                        the job ends and the remainder is released.
+                        Runtime is measured while the robot works, not estimated up front, so the final
+                        fare is only known when the job ends. The hold covers the tasks plus the longest
+                        run we will bill
+                        {quote ? ` (${quote.maxBillableMinutes} minutes)` : ''}; whatever is not used is
+                        released.
                     </h6>
                 </figure>
 
@@ -138,17 +127,17 @@ function Row({
     label,
     value,
     strong,
-    muted,
+    raw,
 }: {
     label: string;
     value: string;
     strong?: boolean;
-    muted?: boolean;
+    raw?: boolean;
 }) {
     return (
-        <div className={cn('flex items-center justify-between', muted && 'text-secondary')}>
+        <div className='flex items-center justify-between'>
             <span className={cn(!strong && 'text-secondary')}>{label}</span>
-            <span className={cn(strong && 'font-medium')}>{value} USDC</span>
+            <span className={cn(strong && 'font-medium')}>{raw ? value : `${value} USDC`}</span>
         </div>
     );
 }

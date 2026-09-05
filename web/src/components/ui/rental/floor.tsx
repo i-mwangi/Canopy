@@ -7,17 +7,13 @@ import type { Rental } from '@/lib/types';
 
 interface Props {
     rental: Rental;
-    wallClock: number;
+    runtimeMinutes: number;
     liveFare: string;
     className?: string;
 }
 
-export default function Floor({ rental, wallClock, liveFare, className }: Props) {
+export default function Floor({ rental, runtimeMinutes, liveFare, className }: Props) {
     const running = rental.status === 'active';
-    const progress =
-        rental.meter.tasksCompleted > 0
-            ? Math.min(100, (rental.meter.tasksCompleted / Math.max(1, rental.meter.tasksCompleted + 1)) * 100)
-            : 0;
 
     return (
         <section className={className}>
@@ -47,8 +43,8 @@ export default function Floor({ rental, wallClock, liveFare, className }: Props)
                     </figure>
 
                     <figure className='px-3 py-2 bg-background/90 border border-secondary rounded-lg text-right'>
-                        <h6 className='text-xs text-secondary'>Elapsed</h6>
-                        <h3 className='text-2xl font-medium tabular-nums'>{formatDuration(wallClock)}</h3>
+                        <h6 className='text-xs text-secondary'>Runtime billed</h6>
+                        <h3 className='text-2xl font-medium tabular-nums'>{formatDuration(runtimeMinutes)}</h3>
                     </figure>
                 </div>
 
@@ -70,12 +66,12 @@ export default function Floor({ rental, wallClock, liveFare, className }: Props)
                         </div>
                     </figure>
 
-                    <div className='flex-1 h-2 bg-gray-background rounded-full overflow-hidden'>
-                        <div
-                            className='h-full bg-foreground transition-all duration-700'
-                            style={{ width: `${running ? progress : 100}%` }}
-                        />
-                    </div>
+                    <figure className='px-3 py-2 bg-background/90 border border-secondary rounded-lg text-right'>
+                        <h6 className='text-xs text-secondary'>Billed at</h6>
+                        <h5 className='text-sm tabular-nums'>
+                            {Math.ceil(runtimeMinutes)} min · {rental.meter.tasksCompleted} tasks
+                        </h5>
+                    </figure>
                 </div>
             </section>
         </section>

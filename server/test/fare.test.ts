@@ -157,13 +157,41 @@ describe('splitFare', () => {
 });
 
 describe('authorizationAmount', () => {
-  it('holds more than the estimate so an overrun still settles', () => {
-    const estimate = { meteredMinutes: 20, tasksCompleted: 5 };
+  it('covers the longest run the marketplace will bill, not a guess at the duration', () => {
+    const worstCase = quoteFare({
+      rates,
+      reading: { meteredMinutes: 60, tasksCompleted: 5 },
+      surgeBps: 10_000,
+      platformFeeBps: 0,
+    }).total;
 
-    const expected = quoteFare({ rates, reading: estimate, surgeBps: 10_000, platformFeeBps: 0 }).total;
-    const hold = authorizationAmount({ rates, estimate, surgeBps: 10_000, bufferBps: 13_000 });
+    const hold = authorizationAmount({
+      rates,
+      estimatedTasks: 5,
+      maxBillableMinutes: 60,
+      surgeBps: 10_000,
+      bufferBps: 13_000,
+    });
 
-    assert.ok(hold > expected);
-    assert.equal(hold, (expected * 13_000n) / 10_000n);
+    assert.equal(hold, (worstCase * 13_000n) / 10_000n);
+  });
+
+  it('holds more than a rental that runs its full allowance could ever cost', () => {
+    const hold = authorizationAmount({
+      rates,
+      estimatedTasks: 5,
+      maxBillableMinutes: 60,
+      surgeBps: 10_000,
+      bufferBps: 13_000,
+    });
+
+    const ranFull = quoteFare({
+      rates,
+      reading: { meteredMinutes: 60, tasksCompleted: 5 },
+      surgeBps: 10_000,
+      platformFeeBps: 0,
+    }).total;
+
+    assert.ok(hold > ranFull);
   });
 });

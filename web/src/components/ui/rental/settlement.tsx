@@ -71,7 +71,7 @@ export default function Settlement({ rental, events, className }: Props) {
                                                     {usd(leg.amount)} USDC
                                                 </span>
                                             ) : (
-                                                <div className='spinner' />
+                                                <span className='text-secondary'>—</span>
                                             )}
                                         </h6>
                                     </div>
@@ -81,7 +81,7 @@ export default function Settlement({ rental, events, className }: Props) {
                                     {leg.event?.txHash ? (
                                         <h5>Tx: {shortAddress(leg.event.txHash)}</h5>
                                     ) : (
-                                        <h5>{done ? leg.party : 'Awaiting settlement…'}</h5>
+                                        <h5>{done ? leg.party : 'Not started'}</h5>
                                     )}
                                 </div>
                             </section>

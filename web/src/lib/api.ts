@@ -1,6 +1,5 @@
 import type {
     Balance,
-    MeterReading,
     Quote,
     Rental,
     RentalEvent,
@@ -60,27 +59,33 @@ export const api = {
 
     robots: () => request<Robot[]>('/robots'),
 
-    quote: (robotId: string, estimatedMinutes: number, estimatedTasks: number) =>
+    quote: (robotId: string, estimatedTasks: number) =>
         request<Quote>('/rentals/quote', {
             method: 'POST',
-            body: JSON.stringify({ robotId, estimatedMinutes, estimatedTasks }),
+            body: JSON.stringify({ robotId, estimatedTasks }),
         }),
 
-    startRental: (robotId: string, renterAccountId: string, estimatedMinutes: number, estimatedTasks: number) =>
+    startRental: (robotId: string, renterAccountId: string, estimatedTasks: number) =>
         request<Rental>('/rentals', {
             method: 'POST',
-            body: JSON.stringify({ robotId, renterAccountId, estimatedMinutes, estimatedTasks }),
+            body: JSON.stringify({ robotId, renterAccountId, estimatedTasks }),
         }),
 
     rental: (rentalId: string) => request<Rental>(`/rentals/${rentalId}`),
 
     events: (rentalId: string) => request<RentalEvent[]>(`/rentals/${rentalId}/events`),
 
-    meter: (rentalId: string, reading: MeterReading) =>
-        request<Rental>(`/rentals/${rentalId}/meter`, { method: 'POST', body: JSON.stringify(reading) }),
+    meter: (rentalId: string, tasksCompleted: number) =>
+        request<Rental>(`/rentals/${rentalId}/meter`, {
+            method: 'POST',
+            body: JSON.stringify({ tasksCompleted }),
+        }),
 
-    complete: (rentalId: string, reading: MeterReading) =>
-        request<Rental>(`/rentals/${rentalId}/complete`, { method: 'POST', body: JSON.stringify(reading) }),
+    complete: (rentalId: string, tasksCompleted: number) =>
+        request<Rental>(`/rentals/${rentalId}/complete`, {
+            method: 'POST',
+            body: JSON.stringify({ tasksCompleted }),
+        }),
 
     settle: (rentalId: string) => request<Rental>(`/rentals/${rentalId}/settle`, { method: 'POST' }),
 

@@ -259,6 +259,7 @@ export function stubConfig(): AppConfig {
       operatingFloatFloor: toMinorUnits('5000'),
       minimumDeposit: toMinorUnits('1'),
       minimumWithdrawal: toMinorUnits('5'),
+      maxBillableMinutes: Number(process.env.MAX_BILLABLE_MINUTES ?? 60),
     },
     server: { port: Number(process.env.PORT ?? 8080) },
   };

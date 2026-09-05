@@ -31,6 +31,7 @@ const config = {
     operatingFloatFloor: usdc('5000'),
     minimumDeposit: usdc('1'),
     minimumWithdrawal: usdc('5'),
+    maxBillableMinutes: 60,
   },
 } as AppConfig;
 
@@ -180,55 +181,66 @@ describe('rental lifecycle', () => {
     });
   });
 
-  const estimate: MeterReading = { meteredMinutes: 20, tasksCompleted: 4 };
+  const estimatedTasks = 4;
 
-  it('holds the buffered estimate rather than the bare quote', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
+  it('holds enough to cover the longest run the marketplace will bill', async () => {
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
 
-    // base 2 + 20 min at 0.25 + 4 tasks at 0.5 = 9, buffered by 30%.
-    assert.equal(rental.authorizedAmount, usdc('11.7'));
+    // base 2 + 60 min at 0.25 + 4 tasks at 0.5 = 19, buffered by 30%.
+    assert.equal(rental.authorizedAmount, usdc('24.7'));
 
     const balance = await ledger.balanceOf(renterId);
-    assert.equal(balance.held, usdc('11.7'));
-    assert.equal(balance.available, usdc('88.3'));
+    assert.equal(balance.held, usdc('24.7'));
+  });
+
+  it('bills the time actually elapsed rather than anything the caller supplies', async () => {
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+
+    // A caller cannot inflate runtime: the meter only accepts a task count.
+    await service.recordMeter(rental.id, { tasksCompleted: 2 });
+    const metered = await service.getRental(rental.id);
+
+    // The rental has just opened, so barely any time has passed.
+    assert.ok(metered!.reading.meteredMinutes < 1, 'runtime should come from the clock');
+    assert.equal(metered!.reading.tasksCompleted, 2);
   });
 
   it('charges the metered fare and refunds the rest of the hold', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
 
-    await service.recordMeter(rental.id, { meteredMinutes: 8, tasksCompleted: 2 });
+    await service.recordMeter(rental.id, { tasksCompleted: 2 });
     await service.completeRental(rental.id);
     const settled = await service.settleRental(rental.id);
 
-    // base 2 + 8 min at 0.25 + 2 tasks at 0.5 = 5.
-    assert.equal(settled.fare, usdc('5'));
-    assert.equal(settled.platformFee, usdc('0.75'));
-    assert.equal(settled.ownerPayout, usdc('4.25'));
+    // Derived from the runtime the server measured, not a fixed number: a rental that opens
+    // and closes inside a millisecond bills no minutes, and one that takes longer bills one.
+    const billedMinutes = BigInt(Math.ceil(settled.reading.meteredMinutes));
+    const expected = rates.baseFare + rates.perMinute * billedMinutes + rates.perTask * 2n;
+
+    assert.equal(settled.fare, expected);
+    assert.equal(settled.platformFee! + settled.ownerPayout!, settled.fare);
 
     const renterBalance = await ledger.balanceOf(renterId);
     assert.equal(renterBalance.held, 0n);
-    assert.equal(renterBalance.available, usdc('95'));
-
-    assert.equal((await ledger.balanceOf(ownerId)).available, usdc('4.25'));
-    assert.equal((await ledger.balanceOf(revenueId)).available, usdc('0.75'));
+    assert.equal(renterBalance.available, usdc('100') - settled.fare!);
   });
 
   it('moves the split on chain from the renter wallet', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
-    await service.completeRental(rental.id, { meteredMinutes: 8, tasksCompleted: 2 });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+    await service.completeRental(rental.id, { tasksCompleted: 2 });
     await service.settleRental(rental.id);
 
     assert.equal(wallets.transfers.length, 2);
-    assert.deepEqual(
-      wallets.transfers.map((transfer) => transfer.amount),
-      [usdc('4.25'), usdc('0.75')],
+    assert.equal(
+      wallets.transfers.reduce((total, transfer) => total + transfer.amount, 0n),
+      (await service.getRental(rental.id))!.fare,
     );
     assert.ok(wallets.transfers.every((transfer) => transfer.walletId === 'w-renter'));
   });
 
   it('caps the fare at the authorization when a rental overruns', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
-    await service.completeRental(rental.id, { meteredMinutes: 600, tasksCompleted: 50 });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+    await service.completeRental(rental.id, { tasksCompleted: 50 });
 
     const settled = await service.settleRental(rental.id);
     assert.equal(settled.fare, rental.authorizedAmount);
@@ -239,10 +251,10 @@ describe('rental lifecycle', () => {
 
   it('prices a scarce fleet higher than an idle one', async () => {
     chain.setAvailable(4);
-    const cheap = await service.quote({ robotId: 1n, estimate });
+    const cheap = await service.quote({ robotId: 1n, estimatedTasks });
 
     chain.setAvailable(1);
-    const dear = await service.quote({ robotId: 1n, estimate });
+    const dear = await service.quote({ robotId: 1n, estimatedTasks });
 
     assert.ok(dear.fare.total > cheap.fare.total);
     assert.ok(dear.surgeBps > cheap.surgeBps);
@@ -272,14 +284,14 @@ describe('rental lifecycle', () => {
       new RentalEventLog(),
     );
 
-    const rental = await direct.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
-    await direct.completeRental(rental.id, { meteredMinutes: 8, tasksCompleted: 2 });
+    const rental = await direct.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+    await direct.completeRental(rental.id, { tasksCompleted: 2 });
     const settled = await direct.settleRental(rental.id);
 
-    assert.equal(settled.ownerPayout, usdc('4.25'));
+    assert.ok(settled.ownerPayout! > 0n);
 
     // The transfer still happened; the ledger just nets to zero rather than double-counting.
-    assert.ok(wallets.transfers.some((transfer) => transfer.amount === usdc('4.25')));
+    assert.ok(wallets.transfers.some((transfer) => transfer.amount === settled.ownerPayout));
     assert.equal((await ledger.balanceOf(linked.id)).available, 0n);
 
     const entries = await ledger.statement({ accountId: linked.id });
@@ -288,7 +300,7 @@ describe('rental lifecycle', () => {
   });
 
   it('returns the whole hold when a rental is cancelled', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
     await service.cancelRental(rental.id, 'robot faulted before pickup');
 
     const balance = await ledger.balanceOf(renterId);
@@ -299,18 +311,18 @@ describe('rental lifecycle', () => {
   });
 
   it('settles only once when called again', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
-    await service.completeRental(rental.id, { meteredMinutes: 8, tasksCompleted: 2 });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
+    await service.completeRental(rental.id, { tasksCompleted: 2 });
 
-    await service.settleRental(rental.id);
+    const settled = await service.settleRental(rental.id);
     await service.settleRental(rental.id);
 
     assert.equal(wallets.transfers.length, 2);
-    assert.equal((await ledger.balanceOf(ownerId)).available, usdc('4.25'));
+    assert.equal((await ledger.balanceOf(ownerId)).available, settled.ownerPayout);
   });
 
   it('refuses to settle a rental that is still running', async () => {
-    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimate });
+    const rental = await service.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks });
     await assert.rejects(() => service.settleRental(rental.id), LedgerConflict);
   });
 
@@ -320,7 +332,7 @@ describe('rental lifecycle', () => {
         service.startRental({
           robotId: 1n,
           renterAccountId: renterId,
-          estimate: { meteredMinutes: 10_000, tasksCompleted: 0 },
+          estimatedTasks: 10_000,
         }),
       /available/,
     );
@@ -347,7 +359,7 @@ describe('rental lifecycle', () => {
     );
 
     await assert.rejects(
-      () => isolated.startRental({ robotId: 1n, renterAccountId: renterId, estimate }),
+      () => isolated.startRental({ robotId: 1n, renterAccountId: renterId, estimatedTasks }),
       /chain unavailable/,
     );
 

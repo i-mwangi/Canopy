@@ -22,6 +22,14 @@ export type AppConfig = {
     operatingFloatFloor: bigint;
     minimumDeposit: bigint;
     minimumWithdrawal: bigint;
+    /**
+     * Longest run a single rental can be billed for.
+     *
+     * Runtime is measured rather than estimated, so the authorization has to cover the worst
+     * case. That makes this a direct lever on how much a renter must have available to
+     * dispatch at all: raising it buys longer jobs at the cost of a larger hold.
+     */
+    maxBillableMinutes: number;
   };
   server: {
     port: number;
@@ -116,6 +124,7 @@ export function loadConfig(): AppConfig {
       operatingFloatFloor: optionalUsdc('OPERATING_FLOAT_FLOOR', '5000'),
       minimumDeposit: optionalUsdc('MINIMUM_DEPOSIT', '1'),
       minimumWithdrawal: optionalUsdc('MINIMUM_WITHDRAWAL', '5'),
+      maxBillableMinutes: optionalInt('MAX_BILLABLE_MINUTES', 15),
     },
     server: {
       port: optionalInt('PORT', 8080),

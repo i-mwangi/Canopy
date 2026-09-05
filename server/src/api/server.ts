@@ -261,10 +261,7 @@ export async function createServer() {
   app.post('/rentals/quote', async (req, res) => {
     const quote = await rentals.quote({
       robotId: BigInt(req.body.robotId),
-      estimate: {
-        meteredMinutes: Number(req.body.estimatedMinutes ?? 0),
-        tasksCompleted: Number(req.body.estimatedTasks ?? 0),
-      },
+      estimatedTasks: Number(req.body.estimatedTasks ?? 0),
     });
 
     res.json({
@@ -274,6 +271,8 @@ export async function createServer() {
       platformFee: toDecimalString(quote.fare.platformFee),
       ownerPayout: toDecimalString(quote.fare.ownerPayout),
       authorizationHold: toDecimalString(quote.authorization),
+      maxBillableMinutes: quote.maxBillableMinutes,
+      perMinute: toDecimalString(quote.rates.perMinute),
     });
   });
 
@@ -281,10 +280,7 @@ export async function createServer() {
     const rental = await rentals.startRental({
       robotId: BigInt(req.body.robotId),
       renterAccountId: req.body.renterAccountId,
-      estimate: {
-        meteredMinutes: Number(req.body.estimatedMinutes ?? 0),
-        tasksCompleted: Number(req.body.estimatedTasks ?? 0),
-      },
+      estimatedTasks: Number(req.body.estimatedTasks ?? 0),
     });
 
     res.status(201).json(renderRental(rental));
@@ -317,7 +313,6 @@ export async function createServer() {
   /** Called by the robot connectivity layer as work progresses. */
   app.post('/rentals/:rentalId/meter', async (req, res) => {
     const rental = await rentals.recordMeter(req.params.rentalId, {
-      meteredMinutes: Number(req.body.meteredMinutes ?? 0),
       tasksCompleted: Number(req.body.tasksCompleted ?? 0),
     });
     res.json(renderRental(rental));
@@ -325,7 +320,6 @@ export async function createServer() {
 
   app.post('/rentals/:rentalId/complete', async (req, res) => {
     const rental = await rentals.completeRental(req.params.rentalId, {
-      meteredMinutes: Number(req.body.meteredMinutes ?? 0),
       tasksCompleted: Number(req.body.tasksCompleted ?? 0),
     });
     res.json(renderRental(rental));

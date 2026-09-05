@@ -95,27 +95,42 @@ export class RentalService {
     private readonly events: RentalEventLog,
   ) {}
 
-  /** Prices a prospective rental without reserving anything. */
-  async quote(params: { robotId: bigint; estimate: MeterReading }) {
+  /**
+   * Prices a prospective rental without reserving anything.
+   *
+   * Only the task count is asked for. Runtime is measured while the robot works, so quoting a
+   * time here would be inventing a number the renter cannot know and would not be billed on.
+   */
+  async quote(params: { robotId: bigint; estimatedTasks: number }) {
     const robot = await this.chain.getRobot(params.robotId);
     const fleet = await this.chain.getFleetAvailability(robot.class_);
     const surge = surgeBps(fleet);
+    const { maxBillableMinutes } = this.config.marketplace;
 
+    // The fare shown before dispatch is the floor: tasks and base only, no runtime yet.
     const fare = quoteFare({
       rates: robot.rates,
-      reading: params.estimate,
+      reading: { meteredMinutes: 0, tasksCompleted: params.estimatedTasks },
       surgeBps: surge,
       platformFeeBps: this.config.marketplace.platformFeeBps,
     });
 
     const authorization = authorizationAmount({
       rates: robot.rates,
-      estimate: params.estimate,
+      estimatedTasks: params.estimatedTasks,
+      maxBillableMinutes,
       surgeBps: surge,
       bufferBps: this.config.marketplace.authorizationBufferBps,
     });
 
-    return { robotId: params.robotId, rates: robot.rates, surgeBps: surge, fare, authorization };
+    return {
+      robotId: params.robotId,
+      rates: robot.rates,
+      surgeBps: surge,
+      fare,
+      authorization,
+      maxBillableMinutes,
+    };
   }
 
   /**
@@ -125,12 +140,12 @@ export class RentalService {
   async startRental(params: {
     robotId: bigint;
     renterAccountId: string;
-    estimate: MeterReading;
+    estimatedTasks: number;
   }): Promise<Rental> {
     const renter = await this.ledger.requireAccount(params.renterAccountId);
     if (renter.role !== 'renter') throw new LedgerConflict(`Account ${renter.id} is not a renter account`);
 
-    const quote = await this.quote({ robotId: params.robotId, estimate: params.estimate });
+    const quote = await this.quote({ robotId: params.robotId, estimatedTasks: params.estimatedTasks });
     const robot = await this.chain.getRobot(params.robotId);
     const ownerAccount = await this.resolveOwnerAccount(robot.owner);
 
@@ -181,7 +196,7 @@ export class RentalService {
       rentalId,
       kind: 'rental_started',
       label: 'Authorization held',
-      detail: 'Estimated fare plus buffer reserved against the renter balance',
+      detail: 'Covers the tasks requested plus the longest run that can be billed',
       amount: quote.authorization,
       phase: 'authorize',
     });
@@ -189,21 +204,27 @@ export class RentalService {
       rentalId,
       kind: 'robot_assigned',
       label: `Robot #${params.robotId} assigned`,
-      detail: `Rental #${onChainId} opened on chain at ${(quote.surgeBps / 10_000).toFixed(2)}x`,
+      detail: `Rental #${onChainId} opened at ${(quote.surgeBps / 10_000).toFixed(2)}x`,
       phase: 'authorize',
     });
 
     return rental;
   }
 
-  /** Records progress from the robot. Readings are monotonic and never reduce the meter. */
-  async recordMeter(rentalId: string, reading: MeterReading): Promise<Rental> {
+  /**
+   * Records progress from the robot.
+   *
+   * The robot reports what it finished; how long it has been running is the marketplace's own
+   * clock. Taking runtime from the caller would let a fare drift away from the time actually
+   * spent, which is the one number both sides can check.
+   */
+  async recordMeter(rentalId: string, progress: { tasksCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
     const next: MeterReading = {
-      meteredMinutes: Math.max(rental.reading.meteredMinutes, reading.meteredMinutes),
-      tasksCompleted: Math.max(rental.reading.tasksCompleted, reading.tasksCompleted),
+      meteredMinutes: this.runtimeMinutes(rental),
+      tasksCompleted: Math.max(rental.reading.tasksCompleted, progress.tasksCompleted),
     };
 
     if (rental.onChainId !== undefined) {
@@ -224,14 +245,17 @@ export class RentalService {
     return updated;
   }
 
-  /** Stops the meter. Nothing is charged until `settleRental` runs. */
-  async completeRental(rentalId: string, finalReading?: MeterReading): Promise<Rental> {
+  /**
+   * Stops the meter and fixes the billable runtime at the elapsed time. Nothing is charged
+   * until `settleRental` runs.
+   */
+  async completeRental(rentalId: string, progress?: { tasksCompleted: number }): Promise<Rental> {
     const rental = await this.requireRental(rentalId);
     if (rental.status !== 'active') throw new LedgerConflict(`Rental ${rentalId} is ${rental.status}`);
 
     const reading: MeterReading = {
-      meteredMinutes: Math.max(rental.reading.meteredMinutes, finalReading?.meteredMinutes ?? 0),
-      tasksCompleted: Math.max(rental.reading.tasksCompleted, finalReading?.tasksCompleted ?? 0),
+      meteredMinutes: this.runtimeMinutes(rental),
+      tasksCompleted: Math.max(rental.reading.tasksCompleted, progress?.tasksCompleted ?? 0),
     };
 
     if (rental.onChainId !== undefined) {
@@ -431,6 +455,15 @@ export class RentalService {
 
   timeline(rentalId: string) {
     return this.events.list(rentalId);
+  }
+
+  /**
+   * Billable runtime so far, capped at the ceiling the authorization was sized against. A
+   * rental left open overnight bills the cap, not the whole night.
+   */
+  private runtimeMinutes(rental: Rental, now = Date.now()): number {
+    const elapsed = Math.max(0, (now - rental.startedAt) / 60_000);
+    return Math.min(elapsed, this.config.marketplace.maxBillableMinutes);
   }
 
   private async requireRental(rentalId: string): Promise<Rental> {

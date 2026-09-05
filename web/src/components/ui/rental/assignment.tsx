@@ -111,6 +111,8 @@ function isCurrent(phase: 'authorize' | 'work' | 'settle', rental: Rental): bool
 
 function summary(phase: 'authorize' | 'work' | 'settle', rental: Rental): string {
     if (phase === 'authorize') return `${usd(rental.authorized)} held`;
-    if (phase === 'work') return `${Math.ceil(rental.meter.meteredMinutes)}m · ${rental.meter.tasksCompleted} tasks`;
+    if (phase === 'work') {
+        return `${Math.ceil(rental.meter.meteredMinutes)}m · ${rental.meter.tasksCompleted} tasks`;
+    }
     return rental.fare ? `${usd(rental.fare)} charged` : '—';
 }
