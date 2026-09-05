@@ -1,4 +1,4 @@
-import type { RobotClass } from '../chain/rental-chain.ts';
+import type { RobotClass } from '../fleet/registry.ts';
 
 export type Zone = 'product-rack' | 'collecting-area' | 'packing-area' | 'delivery-area';
 

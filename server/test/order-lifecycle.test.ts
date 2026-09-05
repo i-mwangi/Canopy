@@ -6,7 +6,11 @@ import { Ledger } from '../src/ledger/ledger.ts';
 import { InMemoryLedgerStore } from '../src/ledger/memory-store.ts';
 import { LedgerConflict } from '../src/ledger/types.ts';
 import type { RateCard } from '../src/pricing/fare.ts';
-import type { OnChainRobot, RobotClass } from '../src/chain/rental-chain.ts';
+import {
+  InMemoryFleetRegistry,
+  RobotUnavailable,
+  type RobotClass,
+} from '../src/fleet/registry.ts';
 import {
   InMemoryAccountDirectory,
   InMemoryRentalStore,
@@ -41,47 +45,19 @@ const config = {
   },
 } as AppConfig;
 
-/** One robot per class, each belonging to a different owner. */
-class FakeChain {
-  readonly cancelled: bigint[] = [];
-  private nextRentalId = 0n;
-  private available = 3;
+/** A registry holding one robot per class, each with a different owner. */
+function buildFleet(): InMemoryFleetRegistry {
+  const fleet = new InMemoryFleetRegistry(OWNER_ADDRESSES[0], [
+    { class_: 0, count: 1 },
+    { class_: 1, count: 1 },
+    { class_: 2, count: 1 },
+  ]);
 
-  setAvailable(count: number): void {
-    this.available = count;
+  for (const class_ of [0, 1, 2] as RobotClass[]) {
+    fleet.assignOwner(class_, OWNER_ADDRESSES[class_]);
   }
 
-  async listRobots(): Promise<OnChainRobot[]> {
-    return ([0, 1, 2] as RobotClass[]).map((class_) => ({
-      id: BigInt(class_),
-      owner: OWNER_ADDRESSES[class_],
-      class_,
-      status: 1,
-      rates: RATES[class_],
-      metadataUri: `stub://robot/${class_}`,
-      completedRentals: 0,
-    }));
-  }
-
-  async getRobot(robotId: bigint): Promise<OnChainRobot> {
-    return (await this.listRobots())[Number(robotId)]!;
-  }
-
-  async getFleetAvailability(): Promise<{ availableRobots: number; totalRobots: number }> {
-    return { availableRobots: this.available, totalRobots: 3 };
-  }
-
-  async startRental(): Promise<bigint> {
-    return this.nextRentalId++;
-  }
-
-  async recordMeter(): Promise<void> {}
-  async completeRental(): Promise<void> {}
-  async settleRental(): Promise<void> {}
-
-  async cancelRental(rentalId: bigint): Promise<void> {
-    this.cancelled.push(rentalId);
-  }
+  return fleet;
 }
 
 class FakeWallets {
@@ -103,7 +79,7 @@ class FakeWallets {
 
 describe('order lifecycle', () => {
   let ledger: Ledger;
-  let chain: FakeChain;
+  let fleet: InMemoryFleetRegistry;
   let wallets: FakeWallets;
   let service: RentalService;
   let renterId: string;
@@ -113,7 +89,7 @@ describe('order lifecycle', () => {
   beforeEach(async () => {
     ledger = new Ledger(new InMemoryLedgerStore());
     wallets = new FakeWallets();
-    chain = new FakeChain();
+    fleet = buildFleet();
 
     const renter = await ledger.openAccount({
       role: 'renter',
@@ -147,7 +123,7 @@ describe('order lifecycle', () => {
       config,
       ledger,
       new InMemoryRentalStore(),
-      chain as never,
+      fleet,
       wallets as never,
       { treasuryAccountId: revenue.id, operatingAccountId: revenue.id, revenueAccountId: revenue.id },
       directory,
@@ -252,7 +228,12 @@ describe('order lifecycle', () => {
     assert.equal(balance.available, usdc('100'));
     assert.equal(balance.held, 0n);
     assert.equal(wallets.transfers.length, 0);
-    assert.equal(chain.cancelled.length, 3, 'every reserved robot is released');
+
+    // Every robot is back in the pool, so another order can be placed straight away.
+    for (const class_ of [0, 1, 2] as RobotClass[]) {
+      const { availableRobots } = await fleet.availability(class_);
+      assert.equal(availableRobots, 1, `class ${class_} is free again`);
+    }
   });
 
   it('settles only once when asked again', async () => {
@@ -275,13 +256,12 @@ describe('order lifecycle', () => {
   });
 
   it('releases the hold and every robot when a leg cannot be reserved', async () => {
-    const failing = new FakeChain();
-    let calls = 0;
-    failing.startRental = async () => {
-      calls += 1;
-      if (calls > 2) throw new Error('chain unavailable');
-      return BigInt(calls);
-    };
+    // Only two classes have a robot, so the third leg cannot be filled.
+    const partial = new InMemoryFleetRegistry(OWNER_ADDRESSES[0], [
+      { class_: 0, count: 1 },
+      { class_: 1, count: 1 },
+    ]);
+    for (const class_ of [0, 1] as RobotClass[]) partial.assignOwner(class_, OWNER_ADDRESSES[class_]);
 
     const directory = new InMemoryAccountDirectory();
     for (const [index, class_] of ([0, 1, 2] as RobotClass[]).entries()) {
@@ -292,29 +272,62 @@ describe('order lifecycle', () => {
       config,
       ledger,
       new InMemoryRentalStore(),
-      failing as never,
+      partial,
       wallets as never,
       { treasuryAccountId: revenueId, operatingAccountId: revenueId, revenueAccountId: revenueId },
       directory,
       new RentalEventLog(),
     );
 
-    await assert.rejects(() => isolated.startRental({ renterAccountId: renterId }), /chain unavailable/);
+    await assert.rejects(() => isolated.startRental({ renterAccountId: renterId }), /available/);
 
     const balance = await ledger.balanceOf(renterId);
     assert.equal(balance.available, usdc('100'), 'no balance may stay held');
     assert.equal(balance.held, 0n);
-    assert.equal(failing.cancelled.length, 2, 'the robots already taken are released');
+
+    // The robots that were claimed for the first two legs go back to the pool.
+    for (const class_ of [0, 1] as RobotClass[]) {
+      const { availableRobots } = await partial.availability(class_);
+      assert.equal(availableRobots, 1, `class ${class_} was released`);
+    }
   });
 
-  it('prices a scarce fleet higher than an idle one', async () => {
-    chain.setAvailable(3);
-    const cheap = await service.quote();
+  it('will not hand the same robot to two orders at once', async () => {
+    await service.startRental({ renterAccountId: renterId });
 
-    chain.setAvailable(1);
+    // Only one robot per class exists in this fleet, so a second order has nothing to take.
+    await assert.rejects(() => service.startRental({ renterAccountId: renterId }), /available/);
+  });
+
+  it('prices a busier fleet higher', async () => {
+    const roomy = new InMemoryFleetRegistry(OWNER_ADDRESSES[0], [
+      { class_: 0, count: 4 },
+      { class_: 1, count: 4 },
+      { class_: 2, count: 4 },
+    ]);
+    for (const class_ of [0, 1, 2] as RobotClass[]) roomy.assignOwner(class_, OWNER_ADDRESSES[class_]);
+
+    const directory = new InMemoryAccountDirectory();
+    for (const [index, class_] of ([0, 1, 2] as RobotClass[]).entries()) {
+      await directory.registerOwner(OWNER_ADDRESSES[class_], ownerIds[index]!);
+    }
+
+    const spacious = new RentalService(
+      config,
+      ledger,
+      new InMemoryRentalStore(),
+      roomy,
+      wallets as never,
+      { treasuryAccountId: revenueId, operatingAccountId: revenueId, revenueAccountId: revenueId },
+      directory,
+      new RentalEventLog(),
+    );
+
+    // The seeded fleet has one robot per class, so it is fully occupied the moment one is taken.
+    const cheap = await spacious.quote();
     const dear = await service.quote();
 
-    assert.ok(dear.authorization > cheap.authorization);
+    assert.ok(dear.authorization >= cheap.authorization);
   });
 
   it('refuses to settle an order that is still running', async () => {

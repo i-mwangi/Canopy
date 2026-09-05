@@ -99,11 +99,6 @@ exactly — no unit is created or lost in the split.
 ## Layout
 
 ```
-contracts/
-  src/RobotRegistry.sol    robots, owners, rate cards, per-class availability
-  src/RentalManager.sol    rental lifecycle: start, meter, complete, settle, cancel
-  test/                    Solidity tests for both contracts
-  scripts/                 deploy and wire, seed a starting fleet
 server/
   src/config.ts            environment, USDC minor-unit conversion
   src/circle/client.ts     Circle developer-controlled wallets gateway
@@ -112,7 +107,7 @@ server/
   src/pricing/fare.ts      rate cards, surge, fare quoting, authorization sizing
   src/rental/service.ts    rental orchestration
   src/rental/accounts.ts   onboarding, deposits, withdrawals
-  src/chain/rental-chain.ts contract reads and operator-signed writes
+  src/fleet/registry.ts    robots, owners, rate cards, availability
   src/api/server.ts        HTTP surface
 web/
   src/app/                 landing, fleet browser, rentals, live meter, wallet
@@ -123,22 +118,22 @@ robot-agent/
   controllers/             robot-side controller, one per unit
 ```
 
-### What is on-chain and what is not
+### Where the record lives
 
-The contracts are the *record*, not the vault. `RentalManager` stores what was agreed and what
-was settled — the authorized amount, the meter readings, the final fare and its split — so a
-robot owner can audit their earnings without trusting the platform's database. It never holds
-funds. The `holdRef` and `settlementRef` fields are hashes of the off-chain identifiers, which
-is what ties a row in the ledger to a rental on chain.
+There are no smart contracts. Everything the marketplace knows — who owns which robot, what it
+charges, which orders ran and how they settled — is the marketplace's own record, and the money
+moves through Circle wallets. Arc is where the USDC lives, not where the logic does.
 
-Every contract write is submitted from the settlement operator wallet. Renters and owners never
-sign a transaction.
+That is a deliberate trade. A contract would let an owner verify their earnings without
+trusting this service; without one, they are trusting the operator's books. Everything else the
+contracts were doing — the registry, the rate cards, the rental lifecycle — a database does
+better and cheaper.
 
 ## The three processes
 
 | Process | Port | Talks to |
 | --- | --- | --- |
-| `server` | 8080 | Circle, Arc RPC, and the browser |
+| `server` | 8080 | Circle and the browser |
 | `web` | 3000 | `server` only |
 | `robot-agent` | 5001 | `server`, and the robots |
 
@@ -196,26 +191,25 @@ cd server && STUB_MODE=true npm start   # :8080, in-memory Circle and Arc
 cd web && npm run dev                   # :3000
 ```
 
-The stub seeds a ten-robot fleet across the three classes (one per class down for maintenance,
-so the grid is not uniform), funds each new renter with 500 USDC, and settles transfers
-instantly. Every other code path is the real one — the same ledger, the same pricing, the same
-rental service. Only the two outermost adapters are swapped.
+The fleet is a ten-robot registry across the three classes (one per class down for maintenance,
+so the grid is not uniform). In stub mode each new renter is funded with 500 USDC and transfers
+settle instantly. Every other code path is the real one — the same ledger, the same pricing, the
+same rental service. Only the Circle adapter is swapped.
 
 The rental page carries an **Advance meter** button in stub mode, standing in for the robot
 agent so a rental can be driven by hand.
 
-### Real money, no contracts
+### Real money
 
-`STUB_CHAIN=true` stubs only the registry and rental manager. Circle stays real, so USDC
-actually moves between wallets while nothing needs to be deployed:
+Without `STUB_MODE`, Circle is real and USDC actually moves between wallets:
 
 ```bash
-cd server && STUB_CHAIN=true SEED_RENTER_USDC=5 npm start
+cd server && SEED_RENTER_USDC=5 npm start
 ```
 
-The stub fleet is then owned by a real Circle wallet, so settlement pays real earnings
-somewhere they can be seen. `SEED_RENTER_USDC` moves a float from the operating wallet to each
-new renter, which saves sending every tester to a faucet.
+Each robot class is assigned a real Circle wallet at boot, so an order's three-way split lands
+in three balances you can look at. `SEED_RENTER_USDC` moves a float from the operating wallet
+to each new renter, which saves sending every tester to a faucet.
 
 ## Frontend
 
@@ -238,43 +232,6 @@ elapsed clock, and a settlement row showing the fare capture and both transfer l
 The dispatch modal and the rental page both make the hold explicit — the fare shown while a job
 runs is what you will be charged, and the authorization is labelled as a reservation rather than
 a charge, because that distinction is the thing users get wrong about metered billing.
-
-## Contracts
-
-```bash
-cd contracts
-npm install
-cp .env.example .env
-npm test          # 19 Solidity tests, including a fuzz over the fee split
-npm run build
-```
-
-Deploy needs an account with a USDC balance — USDC is the native gas token on Arc, so the
-faucet funds gas and fares with the same asset. Fill `ARC_RPC_URL`, `DEPLOYER_PRIVATE_KEY` and
-`SETTLEMENT_OPERATOR_ADDRESS` (the Circle wallet the server signs with), then:
-
-```bash
-npm run deploy
-```
-
-That deploys both contracts and wires them: the registry only accepts capacity claims from the
-manager, and the manager only accepts lifecycle writes from the operator. Both grants happen
-after deploy, and the script verifies them before printing the addresses to copy into
-`server/.env`.
-
-The registry deploys empty, so nothing appears on the browse page until a fleet is listed:
-
-```bash
-npm run seed
-```
-
-`listRobot` records `msg.sender` as the owner, so the account that signs the seed owns every
-robot it lists and receives their earnings. Register that address with the server or settlement
-has nowhere to pay out to:
-
-```bash
-curl -X POST localhost:8080/accounts/owners/link   -H 'content-type: application/json'   -d '{"address":"0x…"}'
-```
 
 ## Setup
 
@@ -302,10 +259,9 @@ Then provision the platform wallets:
 npm run provision
 ```
 
-Copy the printed wallet ids and addresses into `.env`, deploy the contracts, and fill in
-`ROBOT_REGISTRY_ADDRESS` and `RENTAL_MANAGER_ADDRESS`. Call `setRentalManager` on the registry
-and `setSettlementOperator` on the manager with the settlement operator wallet address, then
-fund that wallet and the operating wallet with USDC.
+Copy the printed wallet ids and addresses into `.env`, then fund the operating wallet with USDC
+from the [faucet](https://faucet.circle.com/) — it seeds new renters and carries the working
+float.
 
 ```bash
 npm start
@@ -326,12 +282,12 @@ npm start
 | `GET` | `/robots` | The listed fleet with rate cards and availability |
 | `GET` | `/rentals/:id/events` | Ordered log of everything that happened to a rental |
 | `GET` | `/accounts/:id/rentals` | Rentals opened by an account |
-| `POST` | `/rentals/quote` | Price a rental without reserving anything |
-| `POST` | `/rentals` | Place the hold and open the rental |
-| `POST` | `/rentals/:id/meter` | Push a meter reading from the robot |
-| `POST` | `/rentals/:id/complete` | Stop the meter |
-| `POST` | `/rentals/:id/settle` | Capture the fare, split it, move the USDC |
-| `POST` | `/rentals/:id/cancel` | Void the rental and release the hold |
+| `GET` | `/floor-plan` | The fixed route every order follows |
+| `POST` | `/rentals/quote` | Price an order without reserving anything |
+| `POST` | `/rentals` | Reserve a robot per leg and place the hold |
+| `POST` | `/rentals/:id/meter` | Report a finished move; the sixth settles the order |
+| `POST` | `/rentals/:id/complete` | Stop early and settle whatever ran |
+| `POST` | `/rentals/:id/cancel` | Void the order and release the hold |
 | `POST` | `/webhooks/circle` | Inbound transfer notifications become deposits |
 | `POST` | `/treasury/rebalance` | Sweep to treasury or top up the operating float |
 | `GET` | `/treasury/reconcile/:id` | Compare the ledger against the on-chain balance |
@@ -344,9 +300,9 @@ npm test
 
 Covers the parts where a mistake costs money: deposits are credited once per transaction id,
 held funds cannot be withdrawn or double-spent, concurrent holds against one balance serialise,
-a fare can never exceed its authorization, settlement is idempotent, a cancelled rental returns
-the full hold, and a rental that fails to open on-chain releases its hold rather than stranding
-the renter's balance.
+every owner's share plus the fee equals the fare exactly, a fare can never exceed its
+authorization, settlement is idempotent, an order that cannot reserve all three robots gives
+back both the robots and the hold, and the same robot is never handed to two orders.
 
 ## Production notes
 
@@ -365,6 +321,8 @@ the renter's balance.
   there isn't one, so `POST /accounts/:id/deposits/sync` reads the wallet balance and credits
   whatever the ledger cannot account for. Keep it in production as a backstop for a dropped
   webhook; it is idempotent on the observed balance.
+- `InMemoryFleetRegistry` forgets the fleet on restart, and `reserve` is only atomic within one
+  process. A database version needs a row lock there, or two orders can be handed the same robot.
 - `POST /treasury/rebalance` and the reconcile endpoint should run on a schedule. A non-zero
   drift means USDC arrived that no ledger entry accounts for.
 - The web app is served from `WEB_ORIGIN` (default `http://localhost:3000`), which is the only

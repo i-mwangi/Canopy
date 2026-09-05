@@ -17,11 +17,7 @@ function provisioningConfig(): AppConfig {
     },
     chain: {
       blockchain: (process.env.CIRCLE_BLOCKCHAIN ?? 'ARC-TESTNET') as 'ARC' | 'ARC-TESTNET',
-      rpcUrl: '',
       usdcTokenId: '',
-      robotRegistryAddress: '0x',
-      rentalManagerAddress: '0x',
-      settlementOperatorWalletId: '',
     },
     marketplace: {
       platformFeeBps: 0,
@@ -49,7 +45,7 @@ async function main(): Promise<void> {
   const walletSetId = await wallets.createWalletSet();
   console.log(`CIRCLE_WALLET_SET_ID=${walletSetId}`);
 
-  const roles = ['treasury', 'operating', 'revenue', 'settlement-operator'] as const;
+  const roles = ['treasury', 'operating', 'revenue'] as const;
   const provisioned = await wallets.createWallets(walletSetId, roles.length, { accountType: 'EOA' });
 
   roles.forEach((role, index) => {

@@ -5,7 +5,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { loadConfig, toDecimalString, toMinorUnits } from '../config.ts';
 import { CircleWalletGateway } from '../circle/client.ts';
 import { TreasuryManager } from '../circle/treasury.ts';
-import { RentalChain } from '../chain/rental-chain.ts';
+import { InMemoryFleetRegistry, type FleetRegistry, type RobotClass } from '../fleet/registry.ts';
 import { Ledger } from '../ledger/ledger.ts';
 import { InMemoryLedgerStore } from '../ledger/memory-store.ts';
 import { InsufficientFunds, LedgerConflict } from '../ledger/types.ts';
@@ -20,7 +20,7 @@ import {
 } from '../rental/service.ts';
 import { RentalEventLog } from '../rental/events.ts';
 import { describeLeg, legFor, ZONE_LABELS } from '../rental/legs.ts';
-import { StubChain, StubWalletGateway, stubConfig, STUB_OWNER_ADDRESS } from '../stub/fakes.ts';
+import { StubWalletGateway, stubConfig, STUB_OWNER_ADDRESS } from '../circle/stub-gateway.ts';
 import { withRetry } from '../circle/retry.ts';
 
 const ROBOT_CLASS_NAMES = ['Picking', 'Packing', 'Delivery'] as const;
@@ -48,7 +48,6 @@ function renderRental(rental: Rental) {
     legs: rental.legs.map((leg) => ({
       class: ROBOT_CLASS_NAMES[leg.class_],
       robotId: leg.robotId.toString(),
-      onChainId: leg.onChainId?.toString(),
       surgeBps: leg.surgeBps,
       movesCompleted: leg.movesCompleted,
       leg: renderLeg(leg.class_),
@@ -77,12 +76,9 @@ function renderRates(rates: { baseFare: bigint; perMinute: bigint; perTask: bigi
 }
 
 export async function createServer() {
-  // Two independent stubs. STUB_MODE fakes everything for a walkthrough with no credentials.
-  // STUB_CHAIN fakes only the registry and rental manager, so real USDC still moves through
-  // Circle while there is nothing deployed to point at.
+  // STUB_MODE fakes Circle for a walkthrough with no credentials. The fleet registry is the
+  // marketplace's own record, so there is nothing to stub about it.
   const stubbedWallets = process.env.STUB_MODE === 'true';
-  const stubbedChain = stubbedWallets || process.env.STUB_CHAIN === 'true';
-
   const config = stubbedWallets ? stubConfig() : loadConfig();
 
   const wallets = stubbedWallets ? (new StubWalletGateway() as never) : new CircleWalletGateway(config);
@@ -99,36 +95,37 @@ export async function createServer() {
       await ledger.openAccount({
         role: 'treasury',
         walletId: process.env.TREASURY_WALLET_ID ?? 'stub-treasury',
-        address: (process.env.TREASURY_WALLET_ADDRESS ?? '0x') as `0x${string}`,
+        address: (process.env.TREASURY_WALLET_ADDRESS ?? '0x0') as `0x${string}`,
       })
     ).id,
     operatingAccountId: (
       await ledger.openAccount({
         role: 'operating',
         walletId: process.env.OPERATING_WALLET_ID ?? 'stub-operating',
-        address: (process.env.OPERATING_WALLET_ADDRESS ?? '0x') as `0x${string}`,
+        address: (process.env.OPERATING_WALLET_ADDRESS ?? '0x0') as `0x${string}`,
       })
     ).id,
     revenueAccountId: (
       await ledger.openAccount({
         role: 'revenue',
         walletId: process.env.REVENUE_WALLET_ID ?? 'stub-revenue',
-        address: (process.env.REVENUE_WALLET_ADDRESS ?? '0x') as `0x${string}`,
+        address: (process.env.REVENUE_WALLET_ADDRESS ?? '0x0') as `0x${string}`,
       })
     ).id,
   };
 
   const accounts = new AccountService(config, wallets, ledger, directory, walletSetId);
 
-  // The stub fleet needs one owner so settlement has somewhere to pay. With real wallets that
-  // owner gets a real one, so earnings land somewhere the money can actually be seen.
-  let chain: RentalChain;
-  if (stubbedChain) {
+  // An order pays three owners, so each class gets its own. With real wallets they are real
+  // Circle wallets, which is what makes the three-way split visible in actual balances.
+  const fleet = new InMemoryFleetRegistry(STUB_OWNER_ADDRESS);
+
+  for (const class_ of [0, 1, 2] as RobotClass[]) {
     const owner = stubbedWallets
       ? await ledger.openAccount({
           role: 'owner',
-          walletId: 'stub-fleet-owner',
-          address: STUB_OWNER_ADDRESS,
+          walletId: `stub-fleet-owner-${class_}`,
+          address: `0x${(0xfeed + class_).toString(16).padStart(40, '0')}` as `0x${string}`,
         })
       : (
           await withRetry(() => accounts.onboardOwner(), {
@@ -137,15 +134,13 @@ export async function createServer() {
             attempts: 6,
             baseDelayMs: 2_000,
             maxDelayMs: 20_000,
-            label: 'provisioning the fleet owner wallet',
+            label: 'provisioning a fleet owner wallet',
           })
         ).account;
 
+    fleet.assignOwner(class_, owner.address);
     await directory.registerOwner(owner.address, owner.id);
-    chain = new StubChain(owner.address) as never as RentalChain;
-    console.log(`stub chain: fleet owner ${owner.address}`);
-  } else {
-    chain = new RentalChain(config, wallets);
+    console.log(`fleet owner for class ${class_}: ${owner.address}`);
   }
 
   const eventLog = new RentalEventLog();
@@ -153,7 +148,7 @@ export async function createServer() {
     config,
     ledger,
     new InMemoryRentalStore(),
-    chain,
+    fleet,
     wallets,
     platform,
     directory,
@@ -282,7 +277,7 @@ export async function createServer() {
     res.json(owned.map(renderRental));
   });
 
-  /** The fixed route every job follows, so the floor plan and the fleet agree on the model. */
+  /** The fixed route every order follows, so the floor plan and the fleet agree on the model. */
   app.get('/floor-plan', async (_req, res) => {
     res.json({
       zones: ZONE_LABELS,
@@ -294,7 +289,7 @@ export async function createServer() {
   });
 
   app.get('/robots', async (_req, res) => {
-    const listed = await chain.listRobots();
+    const listed = await fleet.list();
     res.json(
       listed.map((robot) => ({
         id: robot.id.toString(),

@@ -6,11 +6,7 @@ export type AppConfig = {
   };
   chain: {
     blockchain: 'ARC' | 'ARC-TESTNET';
-    rpcUrl: string;
     usdcTokenId: string;
-    robotRegistryAddress: `0x${string}`;
-    rentalManagerAddress: `0x${string}`;
-    settlementOperatorWalletId: string;
   };
   marketplace: {
     platformFeeBps: number;
@@ -93,10 +89,6 @@ export function toDecimalString(minor: bigint): string {
 }
 
 export function loadConfig(): AppConfig {
-  // With a stubbed chain there is nothing deployed to point at, so the chain fields are
-  // placeholders. Circle stays real: money still moves.
-  const chainStubbed = process.env.STUB_CHAIN === 'true';
-  const chainField = (name: string, fallback: string) => (chainStubbed ? (process.env[name] ?? fallback) : required(name));
 
   const blockchain = (process.env.CIRCLE_BLOCKCHAIN ?? 'ARC-TESTNET') as 'ARC' | 'ARC-TESTNET';
   if (blockchain !== 'ARC' && blockchain !== 'ARC-TESTNET') {
@@ -111,11 +103,7 @@ export function loadConfig(): AppConfig {
     },
     chain: {
       blockchain,
-      rpcUrl: chainField('ARC_RPC_URL', 'stub'),
       usdcTokenId: required('CIRCLE_USDC_TOKEN_ID'),
-      robotRegistryAddress: chainField('ROBOT_REGISTRY_ADDRESS', '0x') as `0x${string}`,
-      rentalManagerAddress: chainField('RENTAL_MANAGER_ADDRESS', '0x') as `0x${string}`,
-      settlementOperatorWalletId: chainField('SETTLEMENT_OPERATOR_WALLET_ID', 'stub'),
     },
     marketplace: {
       platformFeeBps: optionalInt('PLATFORM_FEE_BPS', 1500),
@@ -124,7 +112,7 @@ export function loadConfig(): AppConfig {
       operatingFloatFloor: optionalUsdc('OPERATING_FLOAT_FLOOR', '5000'),
       minimumDeposit: optionalUsdc('MINIMUM_DEPOSIT', '1'),
       minimumWithdrawal: optionalUsdc('MINIMUM_WITHDRAWAL', '5'),
-      maxBillableMinutes: optionalInt('MAX_BILLABLE_MINUTES', 15),
+      maxBillableMinutes: optionalInt('MAX_BILLABLE_MINUTES', 2),
     },
     server: {
       port: optionalInt('PORT', 8080),

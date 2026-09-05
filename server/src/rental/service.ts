@@ -12,7 +12,7 @@ import {
   MOVES_PER_TASK,
   type RateCard,
 } from '../pricing/fare.ts';
-import type { RentalChain, RobotClass } from '../chain/rental-chain.ts';
+import type { FleetRegistry, RobotClass } from '../fleet/registry.ts';
 import type { RentalEventLog } from './events.ts';
 import { describeLeg, legFor } from './legs.ts';
 
@@ -32,7 +32,6 @@ export const MOVES_PER_ORDER = ORDER_CLASSES.length * MOVES_PER_TASK;
 export type RentalLeg = {
   class_: RobotClass;
   robotId: bigint;
-  onChainId?: bigint;
   ownerAccountId: string;
   ownerAddress: `0x${string}`;
   rates: RateCard;
@@ -113,7 +112,7 @@ export class RentalService {
     private readonly config: AppConfig,
     private readonly ledger: Ledger,
     private readonly rentals: RentalStore,
-    private readonly chain: RentalChain,
+    private readonly fleet: FleetRegistry,
     private readonly wallets: CircleWalletGateway,
     private readonly platform: PlatformAccounts,
     private readonly directory: AccountDirectory,
@@ -191,35 +190,25 @@ export class RentalService {
 
     const legs: RentalLeg[] = [];
     try {
-      for (const robot of candidates) {
+      for (const candidate of candidates) {
+        const robot = await this.fleet.reserve(candidate.class_);
         const ownerAccount = await this.resolveOwnerAccount(robot.owner);
-
-        const onChainId = await this.chain.startRental({
-          robotId: robot.robotId,
-          renter: renter.address,
-          authorizedAmount: authorization,
-          surgeBps: robot.surgeBps,
-          holdRef: `${hold.id}:${robot.class_}`,
-        });
 
         legs.push({
           class_: robot.class_,
-          robotId: robot.robotId,
-          onChainId,
+          robotId: robot.id,
           ownerAccountId: ownerAccount.id,
           ownerAddress: ownerAccount.address,
           rates: robot.rates,
-          surgeBps: robot.surgeBps,
+          surgeBps: candidate.surgeBps,
           movesCompleted: 0,
         });
       }
     } catch (error) {
-      // Reserving is all or nothing: an order that only has two of its three robots cannot
-      // be fulfilled, so release what was taken rather than stranding a robot or a balance.
+      // Reserving is all or nothing: an order holding two of its three robots cannot be
+      // fulfilled, so give back what was taken rather than stranding a robot or a balance.
       for (const leg of legs) {
-        if (leg.onChainId !== undefined) {
-          await this.chain.cancelRental(leg.onChainId, 'order could not reserve every robot').catch(() => {});
-        }
+        await this.fleet.release(leg.robotId, false);
       }
       await this.ledger.releaseHold({
         holdId: hold.id,
@@ -447,9 +436,7 @@ export class RentalService {
     }
 
     for (const leg of settledLegs) {
-      if (leg.onChainId !== undefined) {
-        await this.chain.settleRental(leg.onChainId, leg.fare ?? 0n, settlementGroup);
-      }
+      await this.fleet.release(leg.robotId, true);
     }
 
     const settled: Rental = {
@@ -483,7 +470,7 @@ export class RentalService {
     await this.ledger.releaseHold({ holdId: rental.holdId, groupId: `cancel:${rentalId}`, reason });
 
     for (const leg of rental.legs) {
-      if (leg.onChainId !== undefined) await this.chain.cancelRental(leg.onChainId, reason);
+      await this.fleet.release(leg.robotId, false);
     }
 
     const cancelled: Rental = { ...rental, status: 'cancelled', endedAt: Date.now() };
@@ -553,23 +540,22 @@ export class RentalService {
     return { ...rental, legs, movesCompleted: target };
   }
 
-  /** One robot of each class, cheapest available first, with its surge at this moment. */
+  /** Prices a robot per class without claiming any of them. */
   private async candidateRobots() {
-    const robots = await this.chain.listRobots();
+    const robots = await this.fleet.list();
     const chosen = [];
 
     for (const class_ of ORDER_CLASSES) {
-      const available = robots.filter((robot) => robot.class_ === class_ && robot.status === 1);
-      const pick = available[0];
+      const pick = robots.find((robot) => robot.class_ === class_ && robot.status === 1);
       if (!pick) throw new LedgerConflict(`No ${legFor(class_).name} robot is available`);
 
-      const fleet = await this.chain.getFleetAvailability(class_);
+      const availability = await this.fleet.availability(class_);
       chosen.push({
         class_,
         robotId: pick.id,
         owner: pick.owner,
         rates: pick.rates,
-        surgeBps: surgeBps(fleet),
+        surgeBps: surgeBps(availability),
       });
     }
 

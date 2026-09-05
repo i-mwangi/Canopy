@@ -17,8 +17,7 @@
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^8.2.0",
-    "express": "^5.1.0",
-    "viem": "^2.21.0"
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
