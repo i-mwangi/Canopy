@@ -95,6 +95,32 @@ class RobotBridge:
         with self._lock:
             return dict(self._claimed)
 
+    # -- readiness ------------------------------------------------------------------
+
+    def readiness(self) -> Dict[str, dict]:
+        """What each robot's state file says, and whether it can take a leg.
+
+        The simulator's controllers exit once their task is done and Webots does not bring
+        them back, so a robot that has already run a leg stays finished until the world is
+        reloaded. Asking before dispatching turns that into an answer rather than an order
+        that is authorised and then cancelled fifteen seconds later.
+        """
+        if BACKEND != "scenario":
+            return {name: {"state": None, "ready": True} for name in SCENARIOS}
+
+        states = {}
+        for name, (_, controller) in SCENARIOS.items():
+            try:
+                state = (WEBOTS_SIM_DIR / controller / "state.txt").read_text(encoding="utf-8").strip()
+            except OSError:
+                state = None
+            states[name] = {"state": state, "ready": state == STATE_READY}
+        return states
+
+    def not_ready(self) -> list:
+        """The legs that cannot run right now."""
+        return [name for name, status in self.readiness().items() if not status["ready"]]
+
     # -- leg execution --------------------------------------------------------------
 
     def run_leg(

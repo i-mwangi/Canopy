@@ -19,6 +19,7 @@ import {
   InMemoryAccountDirectory,
   InMemoryRentalStore,
   RentalService,
+  FleetUnavailable,
   MOVES_PER_ORDER,
   type PlatformAccounts,
   type Rental,
@@ -437,6 +438,10 @@ export async function createServer() {
     }
     if (error instanceof LedgerConflict) {
       res.status(409).json({ error: 'conflict', detail: error.message });
+      return;
+    }
+    if (error instanceof FleetUnavailable) {
+      res.status(503).json({ error: 'fleet unavailable', detail: error.message });
       return;
     }
 

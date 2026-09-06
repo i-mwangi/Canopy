@@ -168,6 +168,10 @@ def dispatch():
     if not rental_id or missing:
         return jsonify({"error": f"rentalId and a robot per leg are required; missing {missing}"}), 400
 
+    waiting = bridge.not_ready()
+    if waiting:
+        return jsonify({"error": f"fleet not ready: {', '.join(waiting)}"}), 503
+
     with jobs_lock:
         if rental_id in jobs:
             return jsonify({"error": "order already dispatched"}), 409
@@ -233,9 +237,39 @@ def abort(rental_id: str):
     return jsonify({"state": "aborting"}), 202
 
 
+@app.get("/ready")
+def ready():
+    """Whether the fleet can take an order, and which legs cannot if not.
+
+    The marketplace asks this before it reserves anything, so a fleet that has already run
+    is a refusal to place the order rather than an order placed and then cancelled.
+    """
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    waiting = bridge.not_ready()
+    return jsonify(
+        {
+            "ready": not waiting,
+            "robots": bridge.readiness(),
+            "detail": (
+                ""
+                if not waiting
+                else f"{', '.join(waiting)} not ready; reload the world in Webots to reset the fleet"
+            ),
+        }
+    )
+
+
 @app.get("/health")
 def health():
-    return jsonify({"robots": bridge.snapshot(), "activeJobs": len(jobs)})
+    return jsonify(
+        {
+            "robots": bridge.snapshot(),
+            "activeJobs": len(jobs),
+            "fleet": bridge.readiness(),
+        }
+    )
 
 
 if __name__ == "__main__":

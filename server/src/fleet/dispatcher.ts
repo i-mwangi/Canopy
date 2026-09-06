@@ -25,6 +25,8 @@ export interface MeterSink {
   cancelRental(rentalId: string, reason: string): Promise<unknown>;
 }
 
+export type FleetReadiness = { ready: boolean; detail: string };
+
 /**
  * Sets a placed order running.
  *
@@ -32,6 +34,8 @@ export interface MeterSink {
  * step. A renter is buying a finished delivery, not a remote control.
  */
 export interface FleetDispatcher {
+  /** Whether the fleet could take an order now. Asked before anything is reserved. */
+  ready(): Promise<FleetReadiness>;
   /** Returns once the fleet has accepted the job, not once the job is done. */
   dispatch(order: DispatchedOrder): Promise<void>;
   /** Stops a job early. Best effort: the marketplace has already stopped billing for it. */
@@ -60,6 +64,21 @@ export class AgentFleetDispatcher implements FleetDispatcher {
   ) {}
 
   attach(): void {}
+
+  async ready(): Promise<FleetReadiness> {
+    try {
+      const response = await fetch(`${this.baseUrl}/ready`, {
+        headers: this.token ? { 'x-agent-token': this.token } : {},
+      });
+      if (!response.ok) return { ready: false, detail: `the fleet did not answer: ${response.status}` };
+
+      const body = (await response.json()) as { ready?: boolean; detail?: string };
+      return { ready: body.ready === true, detail: body.detail ?? '' };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'the fleet could not be reached';
+      return { ready: false, detail };
+    }
+  }
 
   async dispatch(order: DispatchedOrder): Promise<void> {
     const robots = Object.fromEntries(
@@ -108,6 +127,10 @@ export class SimulatedFleetDispatcher implements FleetDispatcher {
 
   attach(sink: MeterSink): void {
     this.sink = sink;
+  }
+
+  async ready(): Promise<FleetReadiness> {
+    return { ready: true, detail: '' };
   }
 
   async dispatch(order: DispatchedOrder): Promise<void> {

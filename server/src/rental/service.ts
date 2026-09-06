@@ -19,6 +19,14 @@ import { describeLeg, legFor } from './legs.ts';
 
 export type RentalStatus = 'active' | 'completed' | 'settled' | 'cancelled';
 
+/** The fleet cannot take an order right now. Nothing has been reserved. */
+export class FleetUnavailable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FleetUnavailable';
+  }
+}
+
 /** The three legs of an order, in the order they are run. */
 export const ORDER_CLASSES: RobotClass[] = [0, 1, 2];
 
@@ -175,6 +183,13 @@ export class RentalService {
   async startRental(params: { renterAccountId: string }): Promise<Rental> {
     const renter = await this.ledger.requireAccount(params.renterAccountId);
     if (renter.role !== 'renter') throw new LedgerConflict(`Account ${renter.id} is not a renter account`);
+
+    // Asked before anything is reserved. A fleet that cannot run should be a refusal to place
+    // the order, not a hold taken and handed back a few seconds later under a vague reason.
+    if (this.fleetDispatcher) {
+      const readiness = await this.fleetDispatcher.ready();
+      if (!readiness.ready) throw new FleetUnavailable(readiness.detail || 'the fleet cannot take an order');
+    }
 
     const candidates = await this.candidateRobots();
     const authorization = orderAuthorization({
