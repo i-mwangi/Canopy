@@ -121,23 +121,26 @@ def meter_loop(job: Job) -> None:
 
 
 def run_job(job: Job) -> None:
-    """Drives the order through its three legs, one move at a time.
+    """Drives the order through its three legs.
 
     The legs run in sequence because each hands the item to the next: nothing can be packed
-    before it is picked.
+    before it is picked. How much of a leg is visible from here is the backend's business —
+    the simulator reports a finished leg, a controller driven a move at a time reports each
+    move — so progress is reported through a callback rather than counted in this loop.
     """
     try:
         for index, robot_class in enumerate(ORDER_CLASSES):
             robot_id = job.robots[robot_class]
 
-            for move in range(MOVES_PER_TASK):
-                bridge.run_task(robot_class, robot_id, job.rental_id, index, move)
+            def report(moves_done: int, index: int = index) -> None:
                 with job.lock:
-                    job.moves_completed = index * MOVES_PER_TASK + move + 1
+                    job.moves_completed = index * MOVES_PER_TASK + moves_done
 
-                # Report immediately rather than waiting for the cadence, so a move shows up
-                # on the floor plan as the robot finishes it.
+                # Report as it happens rather than waiting for the cadence, so the floor plan
+                # fills in as the robots work.
                 post_to_marketplace(f"/rentals/{job.rental_id}/meter", job.reading())
+
+            bridge.run_leg(robot_class, robot_id, job.rental_id, index, on_move=report)
     except RobotUnavailable as error:
         with job.lock:
             job.error = str(error)
