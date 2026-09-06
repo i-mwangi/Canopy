@@ -2,3 +2,9 @@ state/*
 !state/.gitignore
 __pycache__/
 *.pyc
+
+# Webots window layout, not part of the world.
+.*.wbproj
+
+# Assembled by assemble-sim.py from robot-sim/. Disposable.
+sim/
