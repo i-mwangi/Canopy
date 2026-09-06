@@ -142,12 +142,19 @@ a shared token and a rental id. Neither can move money.
 
 ## Robot connectivity
 
+Placing an order is the whole instruction. The marketplace dispatches the job the moment the
+hold is placed, and the robots run the route on their own — nothing waits on the renter, who is
+buying a finished delivery rather than a remote control. Point `ROBOT_AGENT_URL` at the
+connectivity layer to drive a real fleet; leave it unset and the order still walks itself
+through the six moves, one every `SIMULATED_MOVE_SECONDS`, so the marketplace can be exercised
+end to end with no simulator running.
+
 The connectivity layer sits between the marketplace and the fleet. It accepts a dispatched job,
-claims the robot so two rentals cannot drive the same unit, runs the tasks, and pushes meter
-readings back on a fixed cadence.
+claims a robot per leg so two orders cannot drive the same unit, runs the three legs in
+sequence, and pushes meter readings back on a fixed cadence.
 
 ```
-POST /dispatch          {rentalId, robotId, robotClass, tasks}   marketplace → agent
+POST /dispatch          {rentalId, robots: {Picking, Packing, Delivery}}   marketplace → agent
 POST /rentals/:id/meter {movesCompleted}                          agent → marketplace, per move
 POST /rentals/:id/complete + /settle                             agent → marketplace, at the end
 GET  /jobs/:rentalId    current reading and fault state
@@ -181,6 +188,72 @@ python controllers/controller.py --class Picking --id 0   # one per robot
 python connectivity-layer/app.py                          # the agent
 python test_connectivity.py                               # end-to-end check
 ```
+
+## The warehouse simulator
+
+`robot-agent/robot-sim/` is the simulator, copied verbatim from `i-mwangi/HyperAgile`. World,
+controllers, meshes and status files are byte-for-byte the originals — nothing renamed, moved
+or rewritten:
+
+```
+robot-sim/
+  webot-world-setup/factory.wbt              the floor, three robots, three tables, the crates
+  robot-controllers/robot_{1,2,3}_controller/  one controller and one state.txt per robot
+  robot-part-stl/                            chassis and myCobot arm meshes
+  robot-status-memory/{color,order,robot}.txt  what the controllers read while they work
+  connectivity-layer-server/webots.py        the scenario endpoints
+```
+
+The three robots are a myCobot arm on a mecanum base, each with a Robotiq 2F-140 gripper. Their
+routes are the ones their own controllers drive: hardcoded travel, gripper close, carry, place.
+
+The interface is `webots.py`. One endpoint per leg — `/api/scenario1`, `2`, `3` — and each does
+the same thing: check the robot's `state.txt` reads `1`, write the order and robot ids into
+`order.txt` and `robot.txt`, and set `state.txt` to `2`. The controller is polling that file;
+seeing `2` it runs its task and writes `0` when the work is done. `scenario1` also writes
+`color.txt`, which is how the picking robot is told which crate the order is for.
+
+That maps onto Canopy's three legs directly: scenario 1 is Picking, 2 is Packing, 3 is Delivery.
+
+A finished task calls back to a URL the source leaves as a placeholder, so the connectivity
+layer watches `state.txt` return to `0` instead. That is the only completion signal there is: a
+controller runs a whole leg in one call with nothing observable in between, so a leg's two moves
+are credited together rather than one at a time. A controller also `break`s out of its loop when
+its task is done — but Webots restarts it, it writes `1` again, and the fleet is ready for the
+next order without the simulator being restarted.
+
+The repo layout is not a runnable Webots project as it stands: `factory.wbt` refers to its
+meshes as `../stls/`, and `webots.py` expects to run from a directory holding the three
+controller folders alongside the status files. `assemble-sim.py` arranges them into that shape
+without duplicating anything: the world, the meshes and the three controller sources are hard
+links, so they are one set of bytes under two names. Only the six files the simulator writes to
+are real copies — twelve bytes in all — which is what keeps a run from leaving a mark on the
+vendored tree:
+
+```bash
+cd robot-agent
+python assemble-sim.py                                        # builds ./sim, gitignored
+webots sim/worlds/factory.wbt
+cd sim/controllers && python ../../robot-sim/connectivity-layer-server/webots.py   # :5000
+```
+
+Then the connectivity layer on the scenario backend, and the API pointed at it:
+
+```bash
+cd robot-agent && ROBOT_BACKEND=scenario python connectivity-layer/app.py
+cd server && ROBOT_AGENT_URL=http://localhost:5001 npm start
+```
+
+Placing an order now runs the vendored robots: roughly a minute a leg, three legs, then
+settlement. `WEBOTS_PRODUCT_ID` picks which crate the order is for — 0 green, 1 blue, 2 purple —
+which is what `scenario1` turns into the colour code the picking controller reads.
+
+A leg occasionally goes missing. The simulator's controllers parse their state file with no
+guard while its server rewrites that file in place, so a read landing between the two raises
+and takes the controller down. Webots restarts it, it reports ready, and the leg it was holding
+is gone with nothing having reported a failure. The bridge watches for that — a robot reporting
+ready again after being given work has dropped it — and hands the leg over again, up to
+`SCENARIO_ATTEMPTS` times. The fix belongs in the simulator, but not in a vendored copy of it.
 
 ## Stub mode
 
@@ -221,15 +294,16 @@ npm run dev
 ```
 
 Five screens: a landing page that opens a renter or owner account, a fleet browser with class
-filters and live availability, a dispatch modal that re-quotes as you change the estimate, a
+filters and live availability, an order modal that prices the three legs and shows the hold, a
 rental page, and a wallet with a deposit address, withdrawals, and a full activity ledger.
 
-The rental page is the one that matters. It lays the job out in four panels: a rental and rate
-card summary, a three-phase tracker (authorization, runtime, settlement), an ordered detail log
-of every event with its transaction hash, a warehouse floor view carrying the live fare and
-elapsed clock, and a settlement row showing the fare capture and both transfer legs.
+The rental page is the one that matters, and it is a view rather than a console: the order
+arrives already running. It lays the job out in panels — the three legs with the robot and owner
+on each, an ordered detail log of every event with its transaction hash, a warehouse floor view
+carrying the live fare and elapsed clock, and a settlement showing the fare capture, a payout
+row per owner, and the platform fee.
 
-The dispatch modal and the rental page both make the hold explicit — the fare shown while a job
+The order modal and the rental page both make the hold explicit — the fare shown while a job
 runs is what you will be charged, and the authorization is labelled as a reservation rather than
 a charge, because that distinction is the thing users get wrong about metered billing.
 
