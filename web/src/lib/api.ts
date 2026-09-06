@@ -68,20 +68,6 @@ export const api = {
 
     events: (rentalId: string) => request<RentalEvent[]>(`/rentals/${rentalId}/events`),
 
-    meter: (rentalId: string, movesCompleted: number) =>
-        request<Rental>(`/rentals/${rentalId}/meter`, {
-            method: 'POST',
-            body: JSON.stringify({ movesCompleted }),
-        }),
-
-    complete: (rentalId: string, movesCompleted: number) =>
-        request<Rental>(`/rentals/${rentalId}/complete`, {
-            method: 'POST',
-            body: JSON.stringify({ movesCompleted }),
-        }),
-
-    settle: (rentalId: string) => request<Rental>(`/rentals/${rentalId}/settle`, { method: 'POST' }),
-
     cancel: (rentalId: string, reason: string) =>
         request<Rental>(`/rentals/${rentalId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
 };

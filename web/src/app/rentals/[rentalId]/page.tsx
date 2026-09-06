@@ -13,10 +13,6 @@ import { api } from '@/lib/api';
 import { cn, elapsedMinutes } from '@/lib/utils';
 import type { Rental, RentalEvent } from '@/lib/types';
 
-// The fleet drives itself through the route; a renter has no business stepping it forward.
-// These stand in for a simulator that is not attached yet, so they are opt-in.
-const SIMULATOR_CONTROLS = process.env.NEXT_PUBLIC_SIMULATOR_CONTROLS === 'true';
-
 export default function RentalDetail({ params }: { params: Promise<{ rentalId: string }> }) {
     const { rentalId } = use(params);
     const { refresh } = useAccount();
@@ -58,21 +54,6 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
             await refresh();
         } catch (cause: unknown) {
             setError(cause instanceof Error ? cause.message : 'Could not cancel this order');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    /** Stands in for the fleet while no simulator is attached. */
-    async function simulateMove() {
-        if (!rental) return;
-        setBusy(true);
-        try {
-            await api.meter(rental.id, rental.movesCompleted + 1);
-            await load();
-            await refresh();
-        } catch (cause: unknown) {
-            setError(cause instanceof Error ? cause.message : 'Could not report a move');
         } finally {
             setBusy(false);
         }
@@ -145,24 +126,13 @@ export default function RentalDetail({ params }: { params: Promise<{ rentalId: s
 
                             <div className='ml-auto flex items-center gap-x-3'>
                                 {running && (
-                                    <>
-                                        {SIMULATOR_CONTROLS && (
-                                            <button
-                                                className='white-button !py-2.5 !border-tetriary text-secondary'
-                                                disabled={busy}
-                                                onClick={() => void simulateMove()}
-                                            >
-                                                Simulate move {rental.movesCompleted + 1}
-                                            </button>
-                                        )}
-                                        <button
-                                            className='white-button !py-2.5'
-                                            disabled={busy}
-                                            onClick={() => void cancel()}
-                                        >
-                                            Cancel order
-                                        </button>
-                                    </>
+                                    <button
+                                        className='white-button !py-2.5'
+                                        disabled={busy}
+                                        onClick={() => void cancel()}
+                                    >
+                                        Cancel order
+                                    </button>
                                 )}
                                 {!running && (
                                     <Link href='/browse' className='primary-button !py-2.5'>
