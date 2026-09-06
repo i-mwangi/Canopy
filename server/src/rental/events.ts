@@ -1,6 +1,7 @@
 export type RentalEventKind =
   | 'rental_started'
   | 'robot_assigned'
+  | 'fleet_dispatched'
   | 'meter_recorded'
   | 'rental_completed'
   | 'fare_captured'

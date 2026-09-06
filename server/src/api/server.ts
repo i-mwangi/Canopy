@@ -6,6 +6,11 @@ import { loadConfig, toDecimalString, toMinorUnits } from '../config.ts';
 import { CircleWalletGateway } from '../circle/client.ts';
 import { TreasuryManager } from '../circle/treasury.ts';
 import { InMemoryFleetRegistry, type FleetRegistry, type RobotClass } from '../fleet/registry.ts';
+import {
+  AgentFleetDispatcher,
+  SimulatedFleetDispatcher,
+  type FleetDispatcher,
+} from '../fleet/dispatcher.ts';
 import { Ledger } from '../ledger/ledger.ts';
 import { InMemoryLedgerStore } from '../ledger/memory-store.ts';
 import { InsufficientFunds, LedgerConflict } from '../ledger/types.ts';
@@ -143,6 +148,14 @@ export async function createServer() {
     console.log(`fleet owner for class ${class_}: ${owner.address}`);
   }
 
+  // Placing an order is the only instruction the fleet needs. With a connectivity layer
+  // reachable the real robots run the route and report back; without one the order still runs
+  // itself, so nothing waits on somebody pressing a button.
+  const agentUrl = process.env.ROBOT_AGENT_URL;
+  const dispatcher: FleetDispatcher = agentUrl
+    ? new AgentFleetDispatcher(agentUrl.replace(/\/$/, ''), process.env.AGENT_TOKEN ?? '')
+    : new SimulatedFleetDispatcher(Number(process.env.SIMULATED_MOVE_SECONDS ?? 6));
+
   const eventLog = new RentalEventLog();
   const rentals = new RentalService(
     config,
@@ -153,7 +166,9 @@ export async function createServer() {
     platform,
     directory,
     eventLog,
+    dispatcher,
   );
+  dispatcher.attach(rentals);
   const treasury = new TreasuryManager(config, wallets, ledger, platform);
 
   const seedRenterAmount = process.env.SEED_RENTER_USDC

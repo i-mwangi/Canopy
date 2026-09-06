@@ -13,6 +13,7 @@ import {
   type RateCard,
 } from '../pricing/fare.ts';
 import type { FleetRegistry, RobotClass } from '../fleet/registry.ts';
+import type { FleetDispatcher } from '../fleet/dispatcher.ts';
 import type { RentalEventLog } from './events.ts';
 import { describeLeg, legFor } from './legs.ts';
 
@@ -117,6 +118,8 @@ export class RentalService {
     private readonly platform: PlatformAccounts,
     private readonly directory: AccountDirectory,
     private readonly events: RentalEventLog,
+    /** Left out in tests, which drive the meter themselves rather than on a clock. */
+    private readonly fleetDispatcher?: FleetDispatcher,
   ) {}
 
   /**
@@ -250,6 +253,29 @@ export class RentalService {
         label: `${legFor(leg.class_).name}: Robot #${leg.robotId}`,
         detail: `${describeLeg(legFor(leg.class_))} at ${(leg.surgeBps / 10_000).toFixed(2)}x`,
         phase: 'authorize',
+      });
+    }
+
+    if (this.fleetDispatcher) {
+      try {
+        await this.fleetDispatcher.dispatch({
+          rentalId,
+          legs: legs.map((leg) => ({ class_: leg.class_, robotId: leg.robotId })),
+        });
+      } catch (error) {
+        // Nothing is going to move, so the order does not stand. Cancelling gives back the
+        // robots and the hold; leaving it active would bill a renter for a fleet that never ran.
+        const reason = error instanceof Error ? error.message : 'the fleet would not accept the order';
+        await this.cancelRental(rentalId, reason);
+        throw error;
+      }
+
+      this.events.append({
+        rentalId,
+        kind: 'fleet_dispatched',
+        label: 'Fleet dispatched',
+        detail: 'The robots are running the route',
+        phase: 'work',
       });
     }
 
@@ -467,6 +493,7 @@ export class RentalService {
     if (rental.status === 'settled') throw new LedgerConflict(`Rental ${rentalId} is already settled`);
     if (rental.status === 'cancelled') return rental;
 
+    await this.fleetDispatcher?.abort(rentalId);
     await this.ledger.releaseHold({ holdId: rental.holdId, groupId: `cancel:${rentalId}`, reason });
 
     for (const leg of rental.legs) {
