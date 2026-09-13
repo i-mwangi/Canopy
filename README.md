@@ -1,6 +1,6 @@
 # Canopy
 
-A marketplace for renting warehouse robots by the minute, settled in USDC on Arc.
+A marketplace for renting warehouse robots by the minute, settled in USDC on Arc
 
 Fleet owners list robots and set a rate card. Renters dispatch a robot to a job, the meter runs
 while the robot works, and the fare is charged when the job finishes — the same shape as a ride
