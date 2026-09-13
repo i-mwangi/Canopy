@@ -404,3 +404,39 @@ back both the robots and the hold, and the same robot is never handed to two ord
 - Settlement writes the ledger before submitting transfers. If a transfer fails after the ledger
   is written, the settlement group id is a stable idempotency key, so the transfer can be retried
   against exactly one set of entries rather than re-running the capture.
+
+## Demo voiceover
+
+Meet Canopy, a marketplace for renting warehouse robots by the minute, with payments settled in U S D C on Arc.
+
+Canopy connects warehouse tasks with available robots and tracks the cost as they work. Users can get started without installing a crypto wallet or managing private keys. Circle powers the wallets behind the scenes.
+
+Let’s walk through an order, from reserving robots to paying their owners.
+
+The fleet brings together three robot classes: picking, packing, and delivery. Each robot has its own availability, owner, and rate card, including a base fare, a per-minute rate, and a task charge.
+
+An order moves one item through the warehouse. Canopy reserves one available robot for each stage, so the three robots work in sequence.
+
+Before placing the order, we can review the assigned robots, their rates, and the fare before runtime. We can also see the authorization hold. This reserves enough balance to cover all three stages within their billing allowance.
+
+The hold is a reservation, not a payment. The final fare depends on the work completed and the measured runtime. The unused portion becomes available again when the order settles.
+
+Placing the order starts the workflow automatically.
+
+The picking robot moves the item from the product rack to the collecting area. The packing robot takes it to the packing area. Finally, the delivery robot carries the parcel to the delivery area.
+
+For this demonstration, robot movement is simulated, while payments use Circle on Arc testnet.
+
+The floor plan tracks progress across six moves. Alongside it, the event log records each stage of the order. We can follow the elapsed time and the live fare as the job progresses.
+
+Each robot is billed for its own stage. Its clock starts when that stage begins, so one owner’s charge does not include another robot’s working time.
+
+When the final move finishes, Canopy automatically calculates the fare and starts settlement.
+
+Each robot owner receives the payment for their stage, minus the platform’s fee. The settlement panel breaks out all three owner payouts and the platform fee. As the transfers confirm, transaction links let us inspect the payments on Arc.
+
+The wallet brings the financial record together: available funds, money reserved by active orders, and total balance.
+
+The activity history shows the authorization, final fare, and release of unused funds. Users can also add U S D C or withdraw their available balance.
+
+That’s Canopy: one order moving through three robot services, with progress, usage-based pricing, and owner payments connected in a single workflow.
